@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { WebClient } from "@slack/web-api";
 import { getUserAgent } from "../lib/version.ts";
+import {
+  normalizeSlackWorkspaceUrl,
+  slackApiUrlForWorkspace,
+  slackAppOriginForWorkspace,
+} from "./workspace-url.ts";
 
 export type SlackAuth =
   | { auth_type: "standard"; token: string }
@@ -77,9 +82,15 @@ export class SlackApiClient {
 
   constructor(auth: SlackAuth, options?: { workspaceUrl?: string }) {
     this.auth = auth;
-    this.workspaceUrl = options?.workspaceUrl;
+    this.workspaceUrl = options?.workspaceUrl
+      ? normalizeSlackWorkspaceUrl(options.workspaceUrl)
+      : undefined;
     if (auth.auth_type === "standard") {
       this.web = new WebClient(auth.token, {
+        slackApiUrl: this.workspaceUrl
+          ? slackApiUrlForWorkspace(this.workspaceUrl)
+          : "https://slack.com/api/",
+        allowAbsoluteUrls: false,
         timeout: getSlackApiTimeoutMs(),
         retryConfig: { retries: 0 },
         rejectRateLimitedCalls: true,
@@ -132,7 +143,8 @@ export class SlackApiClient {
     attempt?: number;
   }): Promise<Record<string, unknown>> {
     const attempt = input.attempt ?? 0;
-    const url = `${input.workspaceUrl.replace(/\/$/, "")}/api/${input.method}`;
+    const workspaceUrl = normalizeSlackWorkspaceUrl(input.workspaceUrl);
+    const url = `${workspaceUrl}/api/${input.method}`;
     const fd = new FormData();
     fd.append("token", input.auth.xoxc_token);
     for (const [k, v] of Object.entries(input.params)) {
@@ -145,9 +157,10 @@ export class SlackApiClient {
     try {
       response = await fetch(url, {
         method: "POST",
+        redirect: "error",
         headers: {
           Cookie: `d=${encodeURIComponent(input.auth.xoxd_cookie)}`,
-          Origin: "https://app.slack.com",
+          Origin: slackAppOriginForWorkspace(workspaceUrl),
           "User-Agent": getUserAgent(),
         },
         body: fd,
@@ -221,7 +234,8 @@ export class SlackApiClient {
     attempt?: number;
   }): Promise<Record<string, unknown>> {
     const attempt = input.attempt ?? 0;
-    const url = `${input.workspaceUrl.replace(/\/$/, "")}/api/${input.method}`;
+    const workspaceUrl = normalizeSlackWorkspaceUrl(input.workspaceUrl);
+    const url = `${workspaceUrl}/api/${input.method}`;
     const cleanedEntries = Object.entries(input.params)
       .filter(([, v]) => v !== undefined)
       .map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v) : String(v)]);
@@ -234,10 +248,11 @@ export class SlackApiClient {
     try {
       response = await fetch(url, {
         method: "POST",
+        redirect: "error",
         headers: {
           Cookie: `d=${encodeURIComponent(input.auth.xoxd_cookie)}`,
           "Content-Type": "application/x-www-form-urlencoded",
-          Origin: "https://app.slack.com",
+          Origin: slackAppOriginForWorkspace(workspaceUrl),
           "User-Agent": getUserAgent(),
         },
         body: formBody,

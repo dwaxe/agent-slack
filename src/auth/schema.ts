@@ -1,4 +1,17 @@
 import { z } from "zod";
+import {
+  normalizeSlackWorkspaceUrl,
+  SLACK_WORKSPACE_ORIGIN_ERROR,
+} from "../slack/workspace-url.ts";
+
+const SlackWorkspaceUrlSchema = z.string().transform((value, ctx) => {
+  try {
+    return normalizeSlackWorkspaceUrl(value);
+  } catch {
+    ctx.addIssue({ code: "custom", message: SLACK_WORKSPACE_ORIGIN_ERROR });
+    return z.NEVER;
+  }
+});
 
 export const WorkspaceAuthSchema = z.union([
   z.object({
@@ -15,7 +28,7 @@ export const WorkspaceAuthSchema = z.union([
 export type WorkspaceAuth = z.infer<typeof WorkspaceAuthSchema>;
 
 export const WorkspaceSchema = z.object({
-  workspace_url: z.string().url(),
+  workspace_url: SlackWorkspaceUrlSchema,
   workspace_name: z.string().optional(),
   team_id: z.string().optional(),
   team_domain: z.string().optional(),

@@ -85,8 +85,8 @@ export function registerAuthCommand(input: { program: Command; ctx: CliContext }
           );
         }
 
-        for (const team of extracted.teams) {
-          await upsertWorkspace({
+        await upsertWorkspaces(
+          extracted.teams.map((team) => ({
             workspace_url: input.ctx.normalizeUrl(team.url),
             workspace_name: team.name,
             auth: {
@@ -94,8 +94,8 @@ export function registerAuthCommand(input: { program: Command; ctx: CliContext }
               xoxc_token: team.token,
               xoxd_cookie: extracted.cookie_d,
             },
-          });
-        }
+          })),
+        );
         console.log(`Imported ${extracted.teams.length} workspace token(s) from Chrome.`);
       } catch (err: unknown) {
         console.error(input.ctx.errorMessage(err));
@@ -118,8 +118,8 @@ export function registerAuthCommand(input: { program: Command; ctx: CliContext }
           );
         }
 
-        for (const team of extracted.teams) {
-          await upsertWorkspace({
+        await upsertWorkspaces(
+          extracted.teams.map((team) => ({
             workspace_url: input.ctx.normalizeUrl(team.url),
             workspace_name: team.name,
             auth: {
@@ -127,8 +127,8 @@ export function registerAuthCommand(input: { program: Command; ctx: CliContext }
               xoxc_token: team.token,
               xoxd_cookie: extracted.cookie_d,
             },
-          });
-        }
+          })),
+        );
         console.log(`Imported ${extracted.teams.length} workspace token(s) from Brave.`);
       } catch (err: unknown) {
         console.error(input.ctx.errorMessage(err));
@@ -148,8 +148,8 @@ export function registerAuthCommand(input: { program: Command; ctx: CliContext }
           );
         }
 
-        for (const team of extracted.teams) {
-          await upsertWorkspace({
+        await upsertWorkspaces(
+          extracted.teams.map((team) => ({
             workspace_url: input.ctx.normalizeUrl(team.url),
             workspace_name: team.name,
             auth: {
@@ -157,8 +157,8 @@ export function registerAuthCommand(input: { program: Command; ctx: CliContext }
               xoxc_token: team.token,
               xoxd_cookie: extracted.cookie_d,
             },
-          });
-        }
+          })),
+        );
         console.log(`Imported ${extracted.teams.length} workspace token(s) from Firefox.`);
       } catch (err: unknown) {
         console.error(input.ctx.errorMessage(err));
