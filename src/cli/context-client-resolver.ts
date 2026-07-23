@@ -11,18 +11,19 @@ import {
 } from "../auth/store.ts";
 import { resolveWorkspaceSelector } from "./workspace-selector.ts";
 import { SlackApiClient, type SlackAuth } from "../slack/client.ts";
+import { normalizeSlackWorkspaceUrl } from "../slack/workspace-url.ts";
 
 export function normalizeUrl(u: string): string {
-  const url = new URL(u);
-  return `${url.protocol}//${url.host}`;
+  return normalizeSlackWorkspaceUrl(u);
 }
 
 function tryNormalizeUrl(u: string): string | undefined {
   try {
-    return normalizeUrl(u);
+    new URL(u);
   } catch {
     return undefined;
   }
+  return normalizeUrl(u);
 }
 
 function pickAuthFromEnv(): SlackAuth | null {
@@ -67,12 +68,13 @@ export async function getClientForWorkspace(workspaceUrl?: string): Promise<{
 
   const env = pickAuthFromEnv();
   if (env) {
-    const envWorkspaceUrl = process.env.SLACK_WORKSPACE_URL?.trim();
-    const urlForBrowser = resolvedWorkspaceUrl || envWorkspaceUrl;
+    const rawEnvWorkspaceUrl = process.env.SLACK_WORKSPACE_URL?.trim();
+    const urlForClient =
+      resolvedWorkspaceUrl ?? (rawEnvWorkspaceUrl ? normalizeUrl(rawEnvWorkspaceUrl) : undefined);
     return {
-      client: new SlackApiClient(env, { workspaceUrl: urlForBrowser }),
+      client: new SlackApiClient(env, { workspaceUrl: urlForClient }),
       auth: env,
-      workspace_url: urlForBrowser,
+      workspace_url: urlForClient,
     };
   }
 
