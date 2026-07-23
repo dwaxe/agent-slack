@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { Command } from "commander";
 import type { CliContext } from "../src/cli/context.ts";
+import { registerMessageCommand } from "../src/cli/message-command.ts";
 import {
   isSafeModeEnabled,
   redirectSendToDraft,
@@ -32,6 +34,47 @@ describe("safeModeBlockedError", () => {
     expect(safeModeBlockedError("edit").message).toContain('"message edit" is blocked');
     expect(safeModeBlockedError("delete").message).toContain('"message delete" is blocked');
   });
+});
+
+test("safe mode blocks CI compose before workspace or API work", async () => {
+  const originalCi = process.env.CI;
+  const originalExitCode = process.exitCode;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const log = mock(() => {});
+  const error = mock(() => {});
+  const noWorkCtx = {
+    errorMessage: (err: unknown) => (err instanceof Error ? err.message : String(err)),
+  } as CliContext;
+
+  try {
+    process.env.CI = "1";
+    process.exitCode = 0;
+    console.log = log as typeof console.log;
+    console.error = error as typeof console.error;
+
+    const program = new Command().option("--safe-mode");
+    registerMessageCommand({ program, ctx: noWorkCtx });
+    await program.parseAsync(
+      ["--safe-mode", "message", "compose", "C12345678", "review this first"],
+      { from: "user" },
+    );
+
+    expect(log).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      'Safe mode is active: "message compose" cannot skip the editor in CI because that would post without human review.',
+    );
+    expect(process.exitCode).toBe(1);
+  } finally {
+    if (originalCi === undefined) {
+      delete process.env.CI;
+    } else {
+      process.env.CI = originalCi;
+    }
+    process.exitCode = originalExitCode ?? 0;
+    console.log = originalLog;
+    console.error = originalError;
+  }
 });
 
 describe("redirectSendToDraft", () => {
