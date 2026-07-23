@@ -269,7 +269,7 @@ export async function searchMessagesInChannelsFallback(
 
   const results: SearchCompactMessage[] = [];
 
-  for (const channelId of channelIds) {
+  channelLoop: for (const channelId of channelIds) {
     let cursorLatest: string | undefined;
     for (;;) {
       const resp = await client.api("conversations.history", {
@@ -282,6 +282,7 @@ export async function searchMessagesInChannelsFallback(
         break;
       }
 
+      let reachedAfterBoundary = false;
       for (const m of messages) {
         const summary = messageSummaryFromApiMessage(channelId, m);
 
@@ -291,7 +292,7 @@ export async function searchMessagesInChannelsFallback(
             continue;
           }
           if (afterSec !== null && tsNum < afterSec) {
-            cursorLatest = undefined;
+            reachedAfterBoundary = true;
             break;
           }
         }
@@ -325,31 +326,20 @@ export async function searchMessagesInChannelsFallback(
         matchedSummaries.push(summary);
         results.push(toSearchCompactMessage(compact));
         if (results.length >= input.limit) {
-          const referencedUserIds = collectReferencedUserIds(matchedSummaries, {
-            includeReactions: false,
-          });
-          const usersById = await resolveUsersById({
-            client,
-            workspaceUrl: input.workspace_url ?? "",
-            userIds: referencedUserIds,
-            forceRefresh: Boolean(input.refreshUsers),
-          });
-          return {
-            messages: results,
-            referenced_users: toReferencedUsers(referencedUserIds, usersById),
-          };
+          break channelLoop;
         }
       }
 
-      if (!cursorLatest) {
+      if (reachedAfterBoundary || resp.has_more === false) {
         break;
       }
 
       const last = messages.at(-1);
-      cursorLatest = last ? getString(last.ts) : undefined;
-      if (!cursorLatest) {
+      const nextLatest = last ? getString(last.ts) : undefined;
+      if (!nextLatest || nextLatest === cursorLatest) {
         break;
       }
+      cursorLatest = nextLatest;
     }
   }
 
