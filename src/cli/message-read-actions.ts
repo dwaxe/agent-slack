@@ -135,6 +135,7 @@ export async function handleMessageList(input: {
     );
   }
   const workspaceUrl = input.ctx.effectiveWorkspaceUrl(input.options.workspace);
+  const download = input.options.download !== false;
 
   return input.ctx.withAutoRefresh({
     workspaceUrl: target.kind === "url" ? target.ref.workspace_url : workspaceUrl,
@@ -160,7 +161,11 @@ export async function handleMessageList(input: {
           threadTs: rootTs,
           includeReactions,
         });
-        const downloadedPaths = await downloadMessageFiles({ auth, messages: threadMessages });
+        const downloadedPaths = await downloadMessageFiles({
+          auth,
+          messages: threadMessages,
+          download,
+        });
         const maxBodyChars = Number.parseInt(input.options.maxBodyChars, 10);
         const referencedUserIds = collectReferencedUserIds(threadMessages, {
           includeReactions,
@@ -176,7 +181,14 @@ export async function handleMessageList(input: {
             : new Map();
         return pruneEmpty({
           messages: threadMessages
-            .map((m) => toCompactMessage(m, { maxBodyChars, includeReactions, downloadedPaths }))
+            .map((m) =>
+              toCompactMessage(m, {
+                maxBodyChars,
+                includeReactions,
+                downloadedPaths,
+                includeUndownloadedFileMetadata: !download,
+              }),
+            )
             .map(toThreadListMessage),
           referenced_users: toReferencedUsers(referencedUserIds, usersById),
         }) as Record<string, unknown>;
@@ -212,7 +224,11 @@ export async function handleMessageList(input: {
           withReactions,
           withoutReactions,
         });
-        const downloadedPaths = await downloadMessageFiles({ auth, messages: channelMessages });
+        const downloadedPaths = await downloadMessageFiles({
+          auth,
+          messages: channelMessages,
+          download,
+        });
         const maxBodyChars = Number.parseInt(input.options.maxBodyChars, 10);
         const referencedUserIds = collectReferencedUserIds(channelMessages, {
           includeReactions,
@@ -229,7 +245,12 @@ export async function handleMessageList(input: {
         return pruneEmpty({
           channel_id: channelId,
           messages: channelMessages.map((m) =>
-            toCompactMessage(m, { maxBodyChars, includeReactions, downloadedPaths }),
+            toCompactMessage(m, {
+              maxBodyChars,
+              includeReactions,
+              downloadedPaths,
+              includeUndownloadedFileMetadata: !download,
+            }),
           ),
           referenced_users: toReferencedUsers(referencedUserIds, usersById),
         }) as Record<string, unknown>;
@@ -261,7 +282,11 @@ export async function handleMessageList(input: {
         threadTs: rootTs,
         includeReactions,
       });
-      const downloadedPaths = await downloadMessageFiles({ auth, messages: threadMessages });
+      const downloadedPaths = await downloadMessageFiles({
+        auth,
+        messages: threadMessages,
+        download,
+      });
       const maxBodyChars = Number.parseInt(input.options.maxBodyChars, 10);
       const referencedUserIds = collectReferencedUserIds(threadMessages, {
         includeReactions,
@@ -277,7 +302,14 @@ export async function handleMessageList(input: {
           : new Map();
       return pruneEmpty({
         messages: threadMessages
-          .map((m) => toCompactMessage(m, { maxBodyChars, includeReactions, downloadedPaths }))
+          .map((m) =>
+            toCompactMessage(m, {
+              maxBodyChars,
+              includeReactions,
+              downloadedPaths,
+              includeUndownloadedFileMetadata: !download,
+            }),
+          )
           .map(toThreadListMessage),
         referenced_users: toReferencedUsers(referencedUserIds, usersById),
       }) as Record<string, unknown>;
