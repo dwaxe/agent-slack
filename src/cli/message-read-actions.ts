@@ -183,6 +183,7 @@ export async function handleMessageList(input: {
   if (metadataOnly && (input.options.resolveUsers || input.options.refreshUsers)) {
     throw new Error("--metadata-only cannot be combined with user resolution options");
   }
+  const download = !metadataOnly && input.options.download !== false;
 
   return input.ctx.withAutoRefresh({
     workspaceUrl: target.kind === "url" ? target.ref.workspace_url : workspaceUrl,
@@ -218,9 +219,11 @@ export async function handleMessageList(input: {
           includeFiles: !metadataOnly,
           renderMarkdown: !metadataOnly,
         });
-        const downloadedPaths = metadataOnly
-          ? {}
-          : await downloadMessageFiles({ auth, messages: threadMessages });
+        const downloadedPaths = await downloadMessageFiles({
+          auth,
+          messages: threadMessages,
+          download,
+        });
         const maxBodyChars = Number.parseInt(input.options.maxBodyChars, 10);
         const referencedUserIds = metadataOnly
           ? []
@@ -241,6 +244,7 @@ export async function handleMessageList(input: {
             includeMentionMetadata,
             includeContent: !metadataOnly,
             downloadedPaths,
+            includeUndownloadedFileMetadata: !metadataOnly && !download,
           });
           return metadataOnly ? toMetadataOnlyListMessage(compact) : toThreadListMessage(compact);
         });
@@ -292,9 +296,11 @@ export async function handleMessageList(input: {
           includeFiles: !metadataOnly,
           renderMarkdown: !metadataOnly,
         });
-        const downloadedPaths = metadataOnly
-          ? {}
-          : await downloadMessageFiles({ auth, messages: channelMessages });
+        const downloadedPaths = await downloadMessageFiles({
+          auth,
+          messages: channelMessages,
+          download,
+        });
         const maxBodyChars = Number.parseInt(input.options.maxBodyChars, 10);
         const referencedUserIds = metadataOnly
           ? []
@@ -315,6 +321,7 @@ export async function handleMessageList(input: {
             includeMentionMetadata,
             includeContent: !metadataOnly,
             downloadedPaths,
+            includeUndownloadedFileMetadata: !metadataOnly && !download,
           });
           return metadataOnly ? toMetadataOnlyListMessage(compact) : compact;
         });
@@ -366,9 +373,11 @@ export async function handleMessageList(input: {
         includeFiles: !metadataOnly,
         renderMarkdown: !metadataOnly,
       });
-      const downloadedPaths = metadataOnly
-        ? {}
-        : await downloadMessageFiles({ auth, messages: threadMessages });
+      const downloadedPaths = await downloadMessageFiles({
+        auth,
+        messages: threadMessages,
+        download,
+      });
       const maxBodyChars = Number.parseInt(input.options.maxBodyChars, 10);
       const referencedUserIds = metadataOnly
         ? []
@@ -389,6 +398,7 @@ export async function handleMessageList(input: {
           includeMentionMetadata,
           includeContent: !metadataOnly,
           downloadedPaths,
+          includeUndownloadedFileMetadata: !metadataOnly && !download,
         });
         return metadataOnly ? toMetadataOnlyListMessage(compact) : toThreadListMessage(compact);
       });

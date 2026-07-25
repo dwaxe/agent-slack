@@ -126,7 +126,7 @@ agent-slack
 Notes:
 
 - Slack data commands output aggressively pruned JSON (`null`/empty fields removed); help, update, and some authentication setup commands output text.
-- Attached files are auto-downloaded and returned as absolute local paths.
+- Attached files are auto-downloaded by default and returned as absolute local paths.
 
 ## Authentication (no fancy setup)
 
@@ -211,6 +211,9 @@ agent-slack message list "#general" --limit 20 --include-mention-metadata
 
 # Return only message identity, author, and mention evidence (no content or files)
 agent-slack message list "https://workspace.slack.com/archives/C123/p1700000000000000" --metadata-only
+
+# Keep message content and attachment metadata without downloading attachment bodies
+agent-slack message list "#general" --limit 20 --no-download
 
 # Fail instead of silently skipping incomplete global message-search matches
 agent-slack search messages "alias" --require-complete-results
@@ -548,7 +551,7 @@ When to use which:
 
 ### Files (snippets/images/attachments)
 
-`message get/list` auto-download attached files to an agent-friendly temp directory and return file metadata in `message.files[]`, including `name` when Slack provides the original filename and `path` for the local download. Failed downloads keep the attachment entry, preserve `message.files[].path` with a local `.download-error.txt` file, and include `message.files[].error`. `search messages` and `search all` use the same attachment shape for message results, while `search files` skips entries whose download fails. Use `search messages --content-type file` when you also need the source-message permalink for a reply.
+`message get/list` auto-download attached files by default to an agent-friendly temp directory and return file metadata in `message.files[]`, including `name` when Slack provides the original filename and `path` for the local download. For metadata-only channel or full-thread scans, `message list --no-download` skips attachment body downloads while preserving available `name`, `mimetype`, and `mode` metadata without `path` or `error`. Failed downloads keep the attachment entry, preserve `message.files[].path` with a local `.download-error.txt` file, and include `message.files[].error`. `search messages` and `search all` use the same attachment shape for message results, while `search files` skips entries whose download fails. Use `search messages --content-type file` when you also need the source-message permalink for a reply.
 
 - macOS default: `~/.agent-slack/tmp/downloads/`
 
