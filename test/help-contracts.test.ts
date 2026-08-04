@@ -6,6 +6,7 @@ import type { CliContext } from "../src/cli/context.ts";
 import { registerLaterCommand } from "../src/cli/later-command.ts";
 import { registerMessageCommand } from "../src/cli/message-command.ts";
 import { registerUserCommand } from "../src/cli/user-command.ts";
+import { registerUserGroupCommand } from "../src/cli/usergroup-command.ts";
 
 function findCommand(root: Command, ...path: string[]): Command {
   let current = root;
@@ -35,6 +36,7 @@ function buildProgram(): Command {
   registerChannelCommand({ program, ctx });
   registerLaterCommand({ program, ctx });
   registerUserCommand({ program, ctx });
+  registerUserGroupCommand({ program, ctx });
   return program;
 }
 
@@ -114,6 +116,19 @@ describe("agent-facing help contracts", () => {
       "full names containing whitespace",
     );
     expect(resolve.registeredArguments[0]?.description).toContain("quote in the shell");
+    expect(optionDescription(resolve, "--workspace")).toContain("unique substring");
+  });
+
+  test("user-group help separates diagnostic lookup from atomic mention resolution", () => {
+    const get = findCommand(buildProgram(), "usergroup", "get");
+    expect(get.description()).toContain("without constructing a mention");
+    expect(get.registeredArguments[0]?.description).toContain("exact @handle");
+
+    const resolve = findCommand(buildProgram(), "usergroup", "resolve");
+    expect(resolve.description()).toContain("active user groups");
+    expect(resolve.description()).toContain("all-or-none mentions");
+    expect(resolve.registeredArguments[0]?.variadic).toBe(true);
+    expect(resolve.registeredArguments[0]?.required).toBe(true);
     expect(optionDescription(resolve, "--workspace")).toContain("unique substring");
   });
 });

@@ -21,6 +21,7 @@
 - Slack-native drafts that appear in the user's Slack client via `message draft` (list/create/update/delete)
 - Slack canvas creation from Markdown files or inline content, plus export to Markdown
 - Slack channel creation, user invites, and Slack Connect external invites
+- Exact, fail-closed batch resolution for human and user-group mentions
 
 ## Optional
 

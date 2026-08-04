@@ -99,6 +99,9 @@ agent-slack
 │   ├── list
 │   ├── get <user>
 │   └── resolve <identities...>    # exact active-human resolution with atomic mentions
+├── usergroup
+│   ├── get <group>                # exact ID/handle lookup, including disabled groups
+│   └── resolve <groups...>        # exact active-group resolution with atomic mentions
 ├── search
 │   ├── all      <query>           # messages + files
 │   ├── messages <query>
@@ -486,6 +489,25 @@ whitespace, against every returned directory page. Only active humans qualify. L
 `<@U…>`/`<@W…>` fields appear only when the entire batch resolves uniquely; otherwise
 `safe_to_mention` is false, the command exits nonzero, and no live mention token is emitted.
 Incomplete directory evidence contains no definitive per-input results.
+
+### User groups
+
+Keep people and user-group mentions in separate resolution batches.
+
+```bash
+# Inspect one exact user group by ID or handle
+agent-slack usergroup get "@cloud-team" \
+  --workspace "https://workspace.slack.com"
+
+# Resolve all intended user-group mentions atomically
+agent-slack usergroup resolve "@cloud-team" S12345678 \
+  --workspace "https://workspace.slack.com"
+```
+
+`usergroup get` returns exact metadata for active or disabled groups without a live mention.
+`usergroup resolve` accepts only exact IDs or handles and emits `<!subteam^S…>` fields only
+when every requested group resolves uniquely and is active. Otherwise it exits nonzero and
+emits no live user-group mention token.
 
 ### Unreads (inbox view)
 

@@ -9,6 +9,7 @@ import { registerLaterCommand } from "./cli/later-command.ts";
 import { registerUnreadsCommand } from "./cli/unreads-command.ts";
 import { registerUpdateCommand } from "./cli/update-command.ts";
 import { registerUserCommand } from "./cli/user-command.ts";
+import { registerUserGroupCommand } from "./cli/usergroup-command.ts";
 import { registerChannelCommand } from "./cli/channel-command.ts";
 import { registerWorkflowCommand } from "./cli/workflow-command.ts";
 import { shouldStartCommandWatchdog } from "./cli/command-watchdog.ts";
@@ -64,6 +65,7 @@ registerLaterCommand({ program, ctx });
 registerUnreadsCommand({ program, ctx });
 registerUpdateCommand({ program });
 registerUserCommand({ program, ctx });
+registerUserGroupCommand({ program, ctx });
 registerChannelCommand({ program, ctx });
 registerWorkflowCommand({ program, ctx });
 

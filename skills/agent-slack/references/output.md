@@ -15,6 +15,8 @@ Message payloads keep canonical user IDs. Pass `--resolve-users` to add display 
 
 `user resolve` scans every returned workspace-directory page before finalizing exact active-human matches. Its output includes directory completeness and `safe_to_mention`. Live mention fields appear only when every requested identity resolves uniquely; otherwise the command exits nonzero and emits no live mention token. Incomplete evidence omits definitive per-input results.
 
+`usergroup resolve` checks one complete `usergroups.list` snapshot and resolves exact active IDs or handles. Live `<!subteam^S…>` fields appear only when every requested group resolves uniquely; inactive, missing, ambiguous, malformed, or request-failed batches exit nonzero and contain no live mention token. `usergroup get` returns one exact active or inactive group without a mention field.
+
 Use `--max-body-chars`, `--max-content-chars`, `--limit`, or a command's counts-only mode to keep results within the task's needs.
 
 ## Downloaded files
