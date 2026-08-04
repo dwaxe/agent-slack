@@ -38,7 +38,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@slack/web-api": "^7.13.0",
+    "@slack/web-api": "^7.19.0",
     "commander": "^14.0.3",
     "hysnappy": "^1.1.0",
     "node-emoji": "^2.2.0",
