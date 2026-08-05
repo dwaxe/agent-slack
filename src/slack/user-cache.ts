@@ -1,14 +1,15 @@
-import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { getAppDir } from "../lib/app-dir.ts";
-import { readJsonFile, writeJsonFile } from "../lib/fs.ts";
-import { asArray, getString, isRecord } from "../lib/object-type-guards.ts";
+import { readJsonFile } from "../lib/fs.ts";
+import { asArray, isRecord } from "../lib/object-type-guards.ts";
 import type { SlackApiClient } from "./client.ts";
 import type { SlackMessageSummary } from "./messages.ts";
 import { toCompactUser, type CompactSlackUser } from "./users.ts";
 import { isUserId } from "./user-id.ts";
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const USER_TTL_MS = 24 * 60 * 60 * 1000;
 const USER_MENTION_PATTERN = /<@([^>|]+)(?:\|[^>]*)?>/g;
 
@@ -19,15 +20,27 @@ type UserCacheEntry = {
 
 type UserCacheFile = {
   version: number;
+  scope: string;
   entries: Record<string, UserCacheEntry>;
 };
 
-export async function resolveUsersById(input: {
+type ResolveUsersInput = {
   client: SlackApiClient;
   workspaceUrl: string;
   userIds: string[];
   forceRefresh?: boolean;
-}): Promise<Map<string, CompactSlackUser>> {
+};
+
+export async function resolveUsersById(
+  input: ResolveUsersInput,
+): Promise<Map<string, CompactSlackUser>> {
+  return resolveUsersByIdInternal(input, false);
+}
+
+async function resolveUsersByIdInternal(
+  input: ResolveUsersInput,
+  throwOnError: boolean,
+): Promise<Map<string, CompactSlackUser>> {
   const uniqueIds = dedupeUserIds(input.userIds);
   if (uniqueIds.length === 0) {
     return new Map<string, CompactSlackUser>();
@@ -37,13 +50,15 @@ export async function resolveUsersById(input: {
   const now = Date.now();
   const workspaceKey = hashWorkspaceUrl(input.workspaceUrl);
   const isUnknownWorkspace = workspaceKey === "unknown";
+  const cacheScope = input.client.cacheScopeKey();
   const cachePath = isUnknownWorkspace ? "" : join(getAppDir(), `users-cache-${workspaceKey}.json`);
 
   const diskCache = cachePath
-    ? await loadCache(cachePath)
-    : { version: CACHE_VERSION, entries: {} };
+    ? await loadCacheBestEffort(cachePath, { now, scope: cacheScope })
+    : emptyCache(cacheScope);
   const out = new Map<string, CompactSlackUser>();
   const missing: string[] = [];
+  let cacheChanged = false;
 
   for (const userId of uniqueIds) {
     const cached = diskCache.entries[userId];
@@ -54,15 +69,20 @@ export async function resolveUsersById(input: {
     missing.push(userId);
   }
 
-  let cacheChanged = false;
-
   if (missing.length > 0) {
     const fetched: { userId: string; user: CompactSlackUser | undefined }[] = [];
     const concurrency = 5;
     for (let i = 0; i < missing.length; i += concurrency) {
       const chunk = missing.slice(i, i + concurrency);
       const results = await Promise.all(
-        chunk.map(async (userId) => ({ userId, user: await fetchUserById(input.client, userId) })),
+        chunk.map(async (userId) => ({
+          userId,
+          user: await fetchUserById({
+            client: input.client,
+            userId,
+            throwOnError,
+          }),
+        })),
       );
       fetched.push(...results);
     }
@@ -86,13 +106,31 @@ export async function resolveUsersById(input: {
     if (Object.keys(diskCache.entries).length !== Object.keys(prunedCache.entries).length) {
       cacheChanged = true;
     }
-
     if (cacheChanged) {
       await writeCache(cachePath, prunedCache);
     }
   }
 
   return out;
+}
+
+export async function getCachedUserById(input: {
+  client: SlackApiClient;
+  userId: string;
+  workspaceUrl: string;
+  forceRefresh?: boolean;
+}): Promise<CompactSlackUser | undefined> {
+  const userId = input.userId.trim();
+  const users = await resolveUsersByIdInternal(
+    {
+      client: input.client,
+      workspaceUrl: input.workspaceUrl,
+      userIds: [userId],
+      forceRefresh: input.forceRefresh,
+    },
+    true,
+  );
+  return users.get(userId);
 }
 
 export function collectReferencedUserIds(
@@ -154,10 +192,32 @@ function hashWorkspaceUrl(workspaceUrl: string): string {
   return createHash("sha256").update(source).digest("hex").slice(0, 16);
 }
 
-async function loadCache(path: string): Promise<UserCacheFile> {
+function emptyCache(scope: string): UserCacheFile {
+  return { version: CACHE_VERSION, scope, entries: {} };
+}
+
+async function loadCacheBestEffort(
+  path: string,
+  options: { now: number; scope: string },
+): Promise<UserCacheFile> {
+  try {
+    return await loadCache(path, options);
+  } catch {
+    return emptyCache(options.scope);
+  }
+}
+
+async function loadCache(
+  path: string,
+  options: { now: number; scope: string },
+): Promise<UserCacheFile> {
   const file = await readJsonFile<UserCacheFile>(path);
-  if (!file || file.version !== CACHE_VERSION || !isRecord(file.entries)) {
-    return { version: CACHE_VERSION, entries: {} };
+  if (!file) {
+    return emptyCache(options.scope);
+  }
+  if (file.version !== CACHE_VERSION || file.scope !== options.scope || !isRecord(file.entries)) {
+    await rm(path, { force: true });
+    return emptyCache(options.scope);
   }
 
   const entries: Record<string, UserCacheEntry> = {};
@@ -166,8 +226,16 @@ async function loadCache(path: string): Promise<UserCacheFile> {
       continue;
     }
     const fetchedAt = typeof rawEntry.fetched_at === "number" ? rawEntry.fetched_at : undefined;
-    const user = isRecord(rawEntry.user) ? toCompactUser(rawEntry.user) : null;
-    if (!fetchedAt || !user) {
+    const user = isRecord(rawEntry.user)
+      ? toCompactUser({ ...rawEntry.user, profile: rawEntry.user })
+      : null;
+    if (
+      !fetchedAt ||
+      !Number.isFinite(fetchedAt) ||
+      fetchedAt > options.now ||
+      !user ||
+      user.id !== userId
+    ) {
       continue;
     }
     entries[userId] = { fetched_at: fetchedAt, user };
@@ -175,15 +243,21 @@ async function loadCache(path: string): Promise<UserCacheFile> {
 
   return {
     version: CACHE_VERSION,
+    scope: options.scope,
     entries,
   };
 }
 
 async function writeCache(path: string, file: UserCacheFile): Promise<void> {
+  const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await writeJsonFile(path, file);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(tempPath, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await rename(tempPath, path);
   } catch {
     // Cache writes are best effort.
+  } finally {
+    await rm(tempPath, { force: true }).catch(() => {});
   }
 }
 
@@ -195,21 +269,26 @@ function pruneExpiredEntries(file: UserCacheFile, now: number): UserCacheFile {
     }
     next[userId] = entry;
   }
-  return { version: CACHE_VERSION, entries: next };
+  return { version: CACHE_VERSION, scope: file.scope, entries: next };
 }
 
-async function fetchUserById(
-  client: SlackApiClient,
-  userId: string,
-): Promise<CompactSlackUser | undefined> {
+async function fetchUserById(input: {
+  client: SlackApiClient;
+  userId: string;
+  throwOnError: boolean;
+}): Promise<CompactSlackUser | undefined> {
   try {
-    const resp = await client.api("users.info", { user: userId });
+    const resp = await input.client.api("users.info", { user: input.userId });
     const user = isRecord(resp.user) ? resp.user : null;
     if (!user) {
       return undefined;
     }
-    return toCompactUser(user);
-  } catch {
+    const compact = toCompactUser(user);
+    return compact.id === input.userId ? compact : undefined;
+  } catch (error) {
+    if (input.throwOnError) {
+      throw error;
+    }
     return undefined;
   }
 }

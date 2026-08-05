@@ -10,6 +10,31 @@ afterEach(() => {
   delete process.env.AGENT_SLACK_RATE_LIMIT_MAX_WAIT_MS;
 });
 
+describe("SlackApiClient cache scope", () => {
+  test("changes when either browser credential changes", () => {
+    const first = new SlackApiClient({
+      auth_type: "browser",
+      xoxc_token: "xoxc-first",
+      xoxd_cookie: "xoxd-first",
+    });
+    const same = new SlackApiClient({
+      auth_type: "browser",
+      xoxc_token: "xoxc-first",
+      xoxd_cookie: "xoxd-first",
+    });
+    const rotatedCookie = new SlackApiClient({
+      auth_type: "browser",
+      xoxc_token: "xoxc-first",
+      xoxd_cookie: "xoxd-second",
+    });
+
+    expect(first.cacheScopeKey()).toBe(same.cacheScopeKey());
+    expect(first.cacheScopeKey()).not.toBe(rotatedCookie.cacheScopeKey());
+    expect(first.cacheScopeKey()).not.toContain("xoxc-first");
+    expect(first.cacheScopeKey()).not.toContain("xoxd-first");
+  });
+});
+
 describe("SlackApiClient browser multipart transport", () => {
   test("retries HTTP 429 responses using Retry-After", async () => {
     // Fail-fast defaults to 0ms; opt in to waiting so the retry path runs.

@@ -32,6 +32,7 @@ const mockUsersById: Record<
 
 function createClient(calls: ApiCall[]) {
   return {
+    cacheScopeKey: () => "test-principal",
     api: async (method: string, params: Record<string, unknown>) => {
       calls.push({ method, params });
 
