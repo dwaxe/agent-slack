@@ -98,6 +98,10 @@ export class SlackApiClient {
     }
   }
 
+  cacheScopeKey(): string {
+    return this.credentialFingerprint();
+  }
+
   /**
    * One-way local identity for the exact credential scope used by Slack APIs.
    * This must never be logged or included in command output.

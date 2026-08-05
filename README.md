@@ -496,8 +496,10 @@ Treat Slack user IDs beginning with `U` or `W` equivalently.
 # List users (email requires appropriate Slack scopes; fields are pruned if missing)
 agent-slack user list --workspace "https://workspace.slack.com" --limit 200 | jq .
 
-# Get one user by id or handle
+# Get one user by id or handle (exact IDs use the 24-hour profile cache)
 agent-slack user get U12345678 --workspace "https://workspace.slack.com" | jq .
+agent-slack user get U12345678 --refresh --workspace "https://workspace.slack.com" | jq .
+agent-slack user get U12345678 --no-cache --workspace "https://workspace.slack.com" | jq .
 agent-slack user get "@alice" --workspace "https://workspace.slack.com" | jq .
 
 # Resolve a complete batch before constructing human mentions
