@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { WebClient } from "@slack/web-api";
 import { getUserAgent } from "../lib/version.ts";
 import {
@@ -78,12 +79,18 @@ export class SlackApiClient {
   private auth: SlackAuth;
   private web?: WebClient;
   private workspaceUrl?: string;
+  private readonly cacheScope: string;
 
   constructor(auth: SlackAuth, options?: { workspaceUrl?: string }) {
     this.auth = auth;
     this.workspaceUrl = options?.workspaceUrl
       ? normalizeSlackWorkspaceUrl(options.workspaceUrl)
       : undefined;
+    const credentials =
+      auth.auth_type === "standard" ? [auth.token] : [auth.xoxc_token, auth.xoxd_cookie];
+    this.cacheScope = createHash("sha256")
+      .update([auth.auth_type, ...credentials].join("\0"))
+      .digest("hex");
     if (auth.auth_type === "standard") {
       this.web = new WebClient(auth.token, {
         slackApiUrl: this.workspaceUrl
@@ -95,6 +102,10 @@ export class SlackApiClient {
         rejectRateLimitedCalls: true,
       });
     }
+  }
+
+  cacheScopeKey(): string {
+    return this.cacheScope;
   }
 
   /**

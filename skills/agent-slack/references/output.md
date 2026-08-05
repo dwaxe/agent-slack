@@ -11,7 +11,7 @@ Immediate non-attachment sends return `ts` and usually a `permalink`. Attachment
 
 `canvas create` returns `canvas: { id, title?, channel_id? }`. `canvas get` returns `canvas: { id, title?, markdown }`.
 
-Message payloads keep canonical user IDs. Pass `--resolve-users` to add display metadata under `referenced_users`, or `--refresh-users` to refresh the 24-hour per-workspace cache before resolving.
+Message payloads keep canonical user IDs. Pass `--resolve-users` to add display metadata under `referenced_users`, or `--refresh-users` to refresh the 24-hour credential-scoped cache before resolving. Exact-ID `user get` reuses that cache; pass `--refresh` to replace one entry or `--no-cache` to bypass persistence. Never use cached profile fields to choose a mention or write target.
 
 Use `--max-body-chars`, `--max-content-chars`, `--limit`, or a command's counts-only mode to keep results within the task's needs.
 

@@ -1,6 +1,8 @@
 import type { Command } from "commander";
 import type { CliContext } from "./context.ts";
 import { pruneEmpty } from "../lib/compact-json.ts";
+import { getCachedUserById } from "../slack/user-cache.ts";
+import { isUserId } from "../slack/user-id.ts";
 import { getDmChannelForUsers, getUser, listUsers } from "../slack/users.ts";
 import {
   resolveStrictUserIdentities,
@@ -88,15 +90,33 @@ export function registerUserCommand(input: { program: Command; ctx: CliContext }
       "--workspace <url>",
       "Workspace selector (full URL or unique substring; required if you have multiple workspaces)",
     )
+    .option("--refresh", "Refresh an exact-ID profile instead of using the cache")
+    .option("--no-cache", "Fetch without reading or writing the profile cache")
     .action(async (...args) => {
-      const [user, options] = args as [string, { workspace?: string }];
+      const [user, options] = args as [
+        string,
+        { workspace?: string; refresh?: boolean; cache?: boolean },
+      ];
       try {
         const workspaceUrl = input.ctx.effectiveWorkspaceUrl(options.workspace);
         const payload = await input.ctx.withAutoRefresh({
           workspaceUrl,
           work: async () => {
-            const { client } = await input.ctx.getClientForWorkspace(workspaceUrl);
-            return await getUser(client, user);
+            const { client, workspace_url } = await input.ctx.getClientForWorkspace(workspaceUrl);
+            const userId = user.trim();
+            if (!isUserId(userId) || options.cache === false) {
+              return await getUser(client, user);
+            }
+            const profile = await getCachedUserById({
+              client,
+              workspaceUrl: workspace_url ?? "",
+              userId,
+              forceRefresh: Boolean(options.refresh),
+            });
+            if (!profile) {
+              throw new Error("users.info returned no user");
+            }
+            return profile;
           },
         });
         console.log(JSON.stringify(pruneEmpty(payload), null, 2));
