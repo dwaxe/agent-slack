@@ -7,7 +7,11 @@ Slack data commands print JSON to stdout. Help, update, and some authentication 
 
 `message get` returns one message and an optional thread summary. `message list` returns chronological messages; in thread mode this includes the root and all replies.
 
-Immediate non-attachment sends return `ts` and usually a `permalink`. Attachment sends return neither; scheduled sends return `scheduled_message_id` and `post_at` instead.
+`message export-own` returns a schema-versioned, chronological window of the authenticated user's top-level text in public/private channels. Each message has Markdown `content`, raw `content_sha256`, and `canonical_content_sha256`. The canonical hash normalizes Slack URL autolinking, entities, mention labels, and standard emoji rewrites consistently with mutation receipts. `oldest` and `latest` are exact inclusive Slack timestamps. It excludes DMs/group DMs, verifies the author ID and workspace origin, deduplicates by `channel_id` + `ts`, and does not hydrate messages or files. Reject `complete: false`; it means the bounded search pagination cap was reached.
+
+`message receipts list` returns schema-versioned local mutation provenance for an exact inclusive `oldest`/`latest` window with `tracking_started_at`, `unresolved_intent_count`, `incomplete_reasons`, and raw/canonical content hashes, never message plaintext. `complete` requires coverage of the pre-window 120-day scheduling horizon, no in-window unresolved write-ahead intent, and a canonical hash for each timestamp-less receipt. Use `(channel_id, ts)` first; only when `ts` is absent, use `(channel_id, canonical_content_sha256)` as the fallback identity.
+
+Immediate non-attachment sends return `ts` and usually a `permalink`. Attachment sends return `ts` when Slack supplies share metadata; scheduled sends return `scheduled_message_id` and `post_at` instead.
 
 `canvas create` returns `canvas: { id, title?, channel_id? }`. `canvas get` returns `canvas: { id, title?, markdown }`.
 

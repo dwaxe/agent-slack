@@ -11,7 +11,7 @@ Use `agent-slack` from `$PATH`. If it is missing, install it with:
 curl -fsSL https://raw.githubusercontent.com/stablyai/agent-slack/main/install.sh | sh
 ```
 
-Fallback: `npm i -g agent-slack` (Node >= 22.5).
+Fallback: `npm i -g agent-slack` (Node >= 22.13).
 
 Run `agent-slack --help` or the relevant subcommand help before guessing a command or flag.
 If a capability named here is absent from installed help, report version skew instead of guessing. Do not self-update the CLI without explicit authorization.
@@ -30,6 +30,8 @@ If a capability named here is absent from installed help, report version skew in
 3. Choose the narrowest read operation: `message get` for one message, `message list` for a full thread or channel history, and `search messages` or `search files` for discovery.
 4. Use output limits such as `--limit`, `--max-body-chars`, and `--max-content-chars` to avoid unnecessary context.
 5. For a requested write, execute only the requested mutation and verify the resulting JSON metadata.
+
+For a local writing-style corpus, use `message export-own --workspace <url> --oldest <exact-ts> --latest <exact-ts>`, then anti-join its messages with `message receipts list --workspace <url> --oldest <exact-ts> --latest <exact-ts>`. The export is text-only, excludes DMs/group DMs, and does not hydrate messages or download files; check `complete` before consuming it.
 
 For scheduled writes, prefer `--schedule` with an ISO 8601 timestamp and explicit offset when timezone matters. Named `--schedule-in` phrases use the executing environment's local timezone; confirm that it matches the user's intent.
 
