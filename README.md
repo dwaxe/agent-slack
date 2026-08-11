@@ -17,7 +17,7 @@ Install via Bun (recommended):
 curl -fsSL https://raw.githubusercontent.com/stablyai/agent-slack/main/install.sh | sh
 ```
 
-OR npm global install (requires Node >= 22.5):
+OR npm global install (requires Node >= 22.13):
 
 ```bash
 npm i -g agent-slack
@@ -76,6 +76,9 @@ agent-slack
 ├── message
 │   ├── get   <target>             # fetch 1 message (+ thread meta )
 │   ├── list  <target>             # fetch thread or recent channel messages
+│   ├── export-own                 # export your own non-DM channel text in an exact window
+│   ├── receipts
+│   │   └── list                   # list local send/edit provenance for an exact window
 │   ├── send  <target> [text]      # send / reply / schedule (supports --attach, --blocks)
 │   ├── scheduled
 │   │   ├── list                   # list pending scheduled messages
@@ -212,6 +215,26 @@ Optional:
 # Include reactions + which users reacted
 agent-slack message get "https://workspace.slack.com/archives/C123/p1700000000000000" --include-reactions
 ```
+
+### Export your own channel text
+
+Use exact inclusive Slack timestamps to export the authenticated user's top-level text from public and private channels. This path excludes DMs and group DMs and does not hydrate messages, resolve users, enrich attachments, or download files.
+
+```bash
+agent-slack message export-own \
+  --workspace "https://workspace.slack.com" \
+  --oldest "1770165109.000000" \
+  --latest "1772757109.999999"
+
+agent-slack message receipts list \
+  --workspace "https://workspace.slack.com" \
+  --oldest "1770165109.000000" \
+  --latest "1772757109.999999"
+```
+
+`message export-own` verifies `team_id`, `user_id`, and the exact workspace origin with `auth.test`, filters exact timestamps locally, deduplicates by channel and timestamp, and returns messages chronologically. Each message includes Markdown `content`, a raw `content_sha256`, and `canonical_content_sha256`. The canonical hash is computed consistently for outbound and search-retrieved Slack text so URL autolinking, HTML entities, mention labels, and standard emoji rewrites do not change fallback identity. Its `complete` is `false` if the explicit 100-page search cap is reached; Slack search itself can still apply service-side sampling.
+
+Mutation receipts are kept locally under `$XDG_STATE_HOME/agent-slack/` (or `~/.local/state/agent-slack/`) with raw and canonical content hashes rather than plaintext. Every tracked text mutation verifies its authenticated workspace and reserves a write-ahead intent before the human-facing Slack write. `message receipts list` reports `tracking_started_at`, `unresolved_intent_count`, and `incomplete_reasons`; `complete` requires coverage of the requested window plus Slack's 120-day scheduling horizon, no unresolved in-window intent, and canonical hashes for every receipt that lacks an exact Slack `ts`. Consumers should prefer `(channel_id, ts)` and use `(channel_id, canonical_content_sha256)` only for timestamp-less fallback.
 
 ### Compose a message (browser editor)
 

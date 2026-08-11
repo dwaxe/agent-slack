@@ -1,9 +1,16 @@
 import { readFile, stat, realpath } from "node:fs/promises";
 import { basename } from "node:path";
 import type { SlackApiClient } from "./client.ts";
-import { getString, isRecord } from "../lib/object-type-guards.ts";
+import { asArray, getString, isRecord } from "../lib/object-type-guards.ts";
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB — Slack's upload limit
+
+export type SlackFileUploadResult = {
+  file_id: string;
+  channel_id: string;
+  ts?: string;
+  thread_ts?: string;
+};
 
 export async function uploadLocalFileToSlack(input: {
   client: SlackApiClient;
@@ -11,7 +18,9 @@ export async function uploadLocalFileToSlack(input: {
   filePath: string;
   threadTs?: string;
   initialComment?: string;
-}): Promise<void> {
+  beforeUpload?: () => Promise<void>;
+  beforeComplete?: () => Promise<void>;
+}): Promise<SlackFileUploadResult> {
   const resolvedPath = await realpath(input.filePath);
   const fileStats = await stat(resolvedPath);
   if (!fileStats.isFile()) {
@@ -25,6 +34,8 @@ export async function uploadLocalFileToSlack(input: {
 
   const bytes = await readFile(resolvedPath);
   const filename = basename(resolvedPath);
+
+  await input.beforeUpload?.();
 
   const uploadInitResp = await input.client.api("files.getUploadURLExternal", {
     filename,
@@ -57,6 +68,8 @@ export async function uploadLocalFileToSlack(input: {
     );
   }
 
+  await input.beforeComplete?.();
+
   const completeResp = await input.client.api("files.completeUploadExternal", {
     files: [{ id: fileId, title: filename }],
     channel_id: input.channelId,
@@ -71,4 +84,49 @@ export async function uploadLocalFileToSlack(input: {
         : "unknown";
     throw new Error(`Slack files.completeUploadExternal failed: ${errMsg}`);
   }
+
+  const shareIdentity = findUploadShareIdentity(completeResp, input.channelId);
+  return {
+    file_id: fileId,
+    channel_id: shareIdentity?.channel_id ?? input.channelId,
+    ...(shareIdentity?.ts ? { ts: shareIdentity.ts } : {}),
+    ...(shareIdentity?.thread_ts
+      ? { thread_ts: shareIdentity.thread_ts }
+      : input.threadTs
+        ? { thread_ts: input.threadTs }
+        : {}),
+  };
+}
+
+function findUploadShareIdentity(
+  completeResp: Record<string, unknown>,
+  requestedChannelId: string,
+): { channel_id: string; ts?: string; thread_ts?: string } | undefined {
+  for (const file of asArray(completeResp.files)) {
+    if (!isRecord(file) || !isRecord(file.shares)) {
+      continue;
+    }
+    for (const visibility of ["public", "private"] as const) {
+      const shares = file.shares[visibility];
+      if (!isRecord(shares)) {
+        continue;
+      }
+      const channelEntries = asArray(shares[requestedChannelId]);
+      for (const entry of channelEntries) {
+        if (!isRecord(entry)) {
+          continue;
+        }
+        const ts = getString(entry.ts);
+        const threadTs = getString(entry.thread_ts);
+        if (ts || threadTs) {
+          return {
+            channel_id: requestedChannelId,
+            ...(ts ? { ts } : {}),
+            ...(threadTs ? { thread_ts: threadTs } : {}),
+          };
+        }
+      }
+    }
+  }
+  return undefined;
 }
