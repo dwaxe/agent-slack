@@ -9,10 +9,12 @@ export type DraftEditorConfig = {
   workspaceUrl?: string;
   threadTs?: string;
   initialText?: string;
-  onSend: (mrkdwn: string) => Promise<{ ts: string }>;
+  onSend: (mrkdwn: string) => Promise<{ ts: string; receipt_recorded?: boolean }>;
 };
 
-export type DraftResult = { sent: true; text: string } | { cancelled: true };
+export type DraftResult =
+  | { sent: true; text: string; ts: string; receipt_recorded?: boolean }
+  | { cancelled: true };
 
 export function openDraftEditor(config: DraftEditorConfig): Promise<DraftResult> {
   return new Promise<DraftResult>((resolve, reject) => {
@@ -37,9 +39,20 @@ export function openDraftEditor(config: DraftEditorConfig): Promise<DraftResult>
           }
           const sendResult = await config.onSend(data.text);
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true, ts: sendResult.ts }));
+          res.end(
+            JSON.stringify({
+              ok: true,
+              ts: sendResult.ts,
+              receipt_recorded: sendResult.receipt_recorded,
+            }),
+          );
           settled = true;
-          resolve({ sent: true, text: data.text });
+          resolve({
+            sent: true,
+            text: data.text,
+            ts: sendResult.ts,
+            receipt_recorded: sendResult.receipt_recorded,
+          });
           setTimeout(() => server.close(), 300);
         } catch (err: unknown) {
           const safeMessage =

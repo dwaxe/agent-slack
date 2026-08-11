@@ -5,6 +5,13 @@ import { asArray, getString, isRecord } from "../lib/object-type-guards.ts";
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB — Slack's upload limit
 
+export type SlackFileUploadResult = {
+  file_id: string;
+  channel_id: string;
+  ts?: string;
+  thread_ts?: string;
+};
+
 /**
  * Stage a local file for Slack's two-step upload: validate the path/size,
  * reserve an upload URL, and POST the bytes. Returns the reserved file id
@@ -15,6 +22,7 @@ const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB — Slack's upload limit
 async function stageFileUpload(input: {
   client: SlackApiClient;
   filePath: string;
+  beforeUpload?: () => Promise<void>;
 }): Promise<{ fileId: string; filename: string }> {
   const resolvedPath = await realpath(input.filePath);
   const fileStats = await stat(resolvedPath);
@@ -29,6 +37,8 @@ async function stageFileUpload(input: {
 
   const bytes = await readFile(resolvedPath);
   const filename = basename(resolvedPath);
+
+  await input.beforeUpload?.();
 
   const uploadInitResp = await input.client.api("files.getUploadURLExternal", {
     filename,
@@ -64,7 +74,7 @@ async function stageFileUpload(input: {
   return { fileId, filename };
 }
 
-function ensureCompleteOk(resp: unknown): void {
+function ensureCompleteOk(resp: unknown): asserts resp is Record<string, unknown> {
   if (!isRecord(resp) || resp.ok !== true) {
     const errMsg = isRecord(resp) && typeof resp.error === "string" ? resp.error : "unknown";
     throw new Error(`Slack files.completeUploadExternal failed: ${errMsg}`);
@@ -99,11 +109,16 @@ export async function uploadLocalFileToSlack(input: {
   filePath: string;
   threadTs?: string;
   initialComment?: string;
-}): Promise<void> {
+  beforeUpload?: () => Promise<void>;
+  beforeComplete?: () => Promise<void>;
+}): Promise<SlackFileUploadResult> {
   const { fileId, filename } = await stageFileUpload({
     client: input.client,
     filePath: input.filePath,
+    beforeUpload: input.beforeUpload,
   });
+
+  await input.beforeComplete?.();
 
   const completeResp = await input.client.api("files.completeUploadExternal", {
     files: [{ id: fileId, title: filename }],
@@ -113,6 +128,17 @@ export async function uploadLocalFileToSlack(input: {
   });
 
   ensureCompleteOk(completeResp);
+  const shareIdentity = findUploadShareIdentity(completeResp, input.channelId);
+  return {
+    file_id: fileId,
+    channel_id: shareIdentity?.channel_id ?? input.channelId,
+    ...(shareIdentity?.ts ? { ts: shareIdentity.ts } : {}),
+    ...(shareIdentity?.thread_ts
+      ? { thread_ts: shareIdentity.thread_ts }
+      : input.threadTs
+        ? { thread_ts: input.threadTs }
+        : {}),
+  };
 }
 
 /**
@@ -161,4 +187,37 @@ export async function cleanupUploadedDraftFiles(
     return;
   }
   await Promise.allSettled(fileIds.map((file) => client.api("files.delete", { file })));
+}
+
+function findUploadShareIdentity(
+  completeResp: Record<string, unknown>,
+  requestedChannelId: string,
+): { channel_id: string; ts?: string; thread_ts?: string } | undefined {
+  for (const file of asArray(completeResp.files)) {
+    if (!isRecord(file) || !isRecord(file.shares)) {
+      continue;
+    }
+    for (const visibility of ["public", "private"] as const) {
+      const shares = file.shares[visibility];
+      if (!isRecord(shares)) {
+        continue;
+      }
+      const channelEntries = asArray(shares[requestedChannelId]);
+      for (const entry of channelEntries) {
+        if (!isRecord(entry)) {
+          continue;
+        }
+        const ts = getString(entry.ts);
+        const threadTs = getString(entry.thread_ts);
+        if (ts || threadTs) {
+          return {
+            channel_id: requestedChannelId,
+            ...(ts ? { ts } : {}),
+            ...(threadTs ? { thread_ts: threadTs } : {}),
+          };
+        }
+      }
+    }
+  }
+  return undefined;
 }

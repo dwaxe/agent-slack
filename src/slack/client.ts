@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { WebClient } from "@slack/web-api";
 import { getUserAgent } from "../lib/version.ts";
 
@@ -84,6 +85,18 @@ export class SlackApiClient {
         rejectRateLimitedCalls: true,
       });
     }
+  }
+
+  /**
+   * One-way local identity for the exact credential scope used by Slack APIs.
+   * This must never be logged or included in command output.
+   */
+  credentialFingerprint(): string {
+    const secretTuple =
+      this.auth.auth_type === "standard"
+        ? [this.auth.auth_type, this.auth.token]
+        : [this.auth.auth_type, this.auth.xoxc_token, this.auth.xoxd_cookie];
+    return createHash("sha256").update(JSON.stringify(secretTuple), "utf8").digest("hex");
   }
 
   /**

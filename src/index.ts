@@ -12,29 +12,16 @@ import { registerUserCommand } from "./cli/user-command.ts";
 import { registerUserGroupCommand } from "./cli/usergroup-command.ts";
 import { registerChannelCommand } from "./cli/channel-command.ts";
 import { registerWorkflowCommand } from "./cli/workflow-command.ts";
-import { shouldStartCommandWatchdog } from "./cli/command-watchdog.ts";
 import { backgroundUpdateCheck } from "./lib/update.ts";
+import { commandTimeoutMs, shouldStartCommandWatchdog } from "./cli/command-watchdog.ts";
 
 const program = new Command();
-const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
-
-function getCommandTimeoutMs(): number {
-  const raw = process.env.AGENT_SLACK_COMMAND_TIMEOUT_MS?.trim();
-  if (!raw) {
-    return DEFAULT_COMMAND_TIMEOUT_MS;
-  }
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_COMMAND_TIMEOUT_MS;
-  }
-  return Math.floor(parsed);
-}
 
 function startCommandWatchdog(args: string[]): void {
   if (!shouldStartCommandWatchdog(args)) {
     return;
   }
-  const timeoutMs = getCommandTimeoutMs();
+  const timeoutMs = commandTimeoutMs(args);
   const timer = setTimeout(() => {
     console.error(
       `agent-slack command timed out after ${timeoutMs}ms. Set AGENT_SLACK_COMMAND_TIMEOUT_MS to adjust.`,

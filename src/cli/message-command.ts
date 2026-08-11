@@ -14,6 +14,10 @@ import { registerScheduledMessageCommand } from "./message-scheduled-command.ts"
 import { registerMessageDraftCommand } from "./message-draft-command.ts";
 import { isSafeModeEnabled, redirectSendToDraft, safeModeBlockedError } from "./safe-mode.ts";
 import { collectOptionValue } from "./options.ts";
+import {
+  registerMessageExportCommand,
+  registerMessageReceiptsCommand,
+} from "./message-export-command.ts";
 
 export function registerMessageCommand(input: { program: Command; ctx: CliContext }): void {
   const safeModeActive = (): boolean =>
@@ -271,6 +275,8 @@ export function registerMessageCommand(input: { program: Command; ctx: CliContex
 
   registerScheduledMessageCommand({ messageCmd, ctx: input.ctx });
   registerMessageDraftCommand({ messageCmd, ctx: input.ctx });
+  registerMessageExportCommand({ messageCmd, ctx: input.ctx });
+  registerMessageReceiptsCommand({ messageCmd });
 
   messageCmd
     .command("compose")

@@ -4,9 +4,11 @@ import { openDmChannel, resolveChannelId } from "../slack/channels.ts";
 import type { SlackApiClient } from "../slack/client.ts";
 import {
   cancelScheduledMessage as cancelScheduledMessageApi,
+  findScheduledMessageReceiptIdentity,
   listScheduledMessages as listScheduledMessagesApi,
   normalizeScheduleLimit,
 } from "../slack/scheduled-messages.ts";
+import { resolveAuthenticatedMutationWorkspace } from "./mutation-receipt.ts";
 
 export async function listScheduledMessages(input: {
   ctx: CliContext;
@@ -71,16 +73,77 @@ export async function cancelScheduledMessage(input: {
   return await input.ctx.withAutoRefresh({
     workspaceUrl,
     work: async () => {
-      const { client } = await input.ctx.getClientForWorkspace(workspaceUrl);
+      const reconciliationStartedAt = input.ctx.removeScheduledSendReceipt ? new Date() : undefined;
+      const { client, workspace_url } = await input.ctx.getClientForWorkspace(workspaceUrl);
+      let exactWorkspaceUrl =
+        workspace_url ??
+        (channelTarget.kind === "url" ? channelTarget.ref.workspace_url : workspaceUrl);
+      let scheduledIdentity:
+        | Awaited<ReturnType<typeof findScheduledMessageReceiptIdentity>>
+        | undefined;
+      let reconciliationLookupFailed = false;
+      if (input.ctx.removeScheduledSendReceipt) {
+        exactWorkspaceUrl = await resolveAuthenticatedMutationWorkspace(client, exactWorkspaceUrl);
+      }
       const channelId = await resolveScheduledChannelTarget(client, channelTarget);
+      if (input.ctx.removeScheduledSendReceipt) {
+        try {
+          scheduledIdentity = await findScheduledMessageReceiptIdentity(client, {
+            channelId,
+            scheduledMessageId: input.scheduledMessageId,
+          });
+          reconciliationLookupFailed =
+            scheduledIdentity === undefined || scheduledIdentity.unique === false;
+        } catch (error) {
+          reconciliationLookupFailed = true;
+          process.stderr.write(
+            `Warning: could not read the scheduled message for local provenance reconciliation: ${input.ctx.errorMessage(error)}\n`,
+          );
+        }
+      }
       await cancelScheduledMessageApi(client, {
         channelId,
         scheduledMessageId: input.scheduledMessageId,
       });
+      const receiptCleanup: Record<string, unknown> = {};
+      if (input.ctx.removeScheduledSendReceipt) {
+        if (!exactWorkspaceUrl) {
+          process.stderr.write(
+            "Warning: scheduled message was cancelled, but no exact workspace URL was available to remove its local AI provenance receipt.\n",
+          );
+          receiptCleanup.receipt_removed = false;
+        } else {
+          try {
+            const cleanup = await input.ctx.removeScheduledSendReceipt({
+              workspaceUrl: exactWorkspaceUrl,
+              channelId,
+              scheduledMessageId: input.scheduledMessageId,
+              content: scheduledIdentity?.unique ? scheduledIdentity.content : undefined,
+              postAt: scheduledIdentity?.unique ? scheduledIdentity.postAt : undefined,
+              credentialFingerprint: scheduledIdentity?.unique
+                ? client.credentialFingerprint()
+                : undefined,
+              reconciledAt: reconciliationStartedAt,
+            });
+            receiptCleanup.receipt_removed =
+              cleanup.finalized_receipt_removed || cleanup.pending_intent_removed;
+            receiptCleanup.pending_intent_removed = cleanup.pending_intent_removed;
+            if (reconciliationLookupFailed) {
+              receiptCleanup.receipt_cleanup_complete = false;
+            }
+          } catch (error) {
+            process.stderr.write(
+              `Warning: scheduled message was cancelled, but its local AI provenance receipt could not be removed: ${input.ctx.errorMessage(error)}\n`,
+            );
+            receiptCleanup.receipt_removed = false;
+          }
+        }
+      }
       return {
         ok: true,
         channel_id: channelId,
         scheduled_message_id: input.scheduledMessageId,
+        ...receiptCleanup,
       };
     },
   });

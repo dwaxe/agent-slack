@@ -10,6 +10,19 @@ afterEach(() => {
   delete process.env.AGENT_SLACK_RATE_LIMIT_MAX_WAIT_MS;
 });
 
+describe("SlackApiClient credential identity", () => {
+  test("returns a stable one-way fingerprint scoped to the exact credential", () => {
+    const first = new SlackApiClient({ auth_type: "standard", token: "xoxb-secret-one" });
+    const same = new SlackApiClient({ auth_type: "standard", token: "xoxb-secret-one" });
+    const different = new SlackApiClient({ auth_type: "standard", token: "xoxb-secret-two" });
+
+    expect(first.credentialFingerprint()).toMatch(/^[0-9a-f]{64}$/);
+    expect(first.credentialFingerprint()).toBe(same.credentialFingerprint());
+    expect(first.credentialFingerprint()).not.toBe(different.credentialFingerprint());
+    expect(first.credentialFingerprint()).not.toContain("secret");
+  });
+});
+
 describe("SlackApiClient browser multipart transport", () => {
   test("retries HTTP 429 responses using Retry-After", async () => {
     // Fail-fast defaults to 0ms; opt in to waiting so the retry path runs.

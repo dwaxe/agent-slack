@@ -1,5 +1,10 @@
 import type { SlackApiClient } from "./client.ts";
 import { asArray, getNumber, getString, isRecord } from "../lib/object-type-guards.ts";
+import { canonicalSlackTextContentSha256 } from "./content-identity.ts";
+import {
+  normalizeSlackScheduledMessageId,
+  slackScheduledMessageApiId,
+} from "./scheduled-message-id.ts";
 
 const MAX_SCHEDULE_SECONDS = 120 * 24 * 60 * 60;
 const DEFAULT_NAMED_TIME = { hour: 9, minute: 0 };
@@ -9,6 +14,12 @@ type Clock = {
 };
 
 export type ScheduledMessage = Record<string, unknown>;
+
+export type ScheduledMessageReceiptIdentity = {
+  content: string;
+  postAt: number;
+  unique: boolean;
+};
 
 export async function listScheduledMessages(
   client: SlackApiClient,
@@ -46,8 +57,76 @@ export async function cancelScheduledMessage(
 ): Promise<void> {
   await client.api("chat.deleteScheduledMessage", {
     channel: input.channelId,
-    scheduled_message_id: input.scheduledMessageId,
+    scheduled_message_id: slackScheduledMessageApiId(input.scheduledMessageId),
   });
+}
+
+/**
+ * Read the exact scheduled message before cancellation so a successful Slack
+ * cancellation can reconcile a write-ahead intent whose final receipt failed.
+ */
+export async function findScheduledMessageReceiptIdentity(
+  client: SlackApiClient,
+  input: { channelId: string; scheduledMessageId: string; pageCap?: number },
+): Promise<ScheduledMessageReceiptIdentity | undefined> {
+  const pageCap = input.pageCap ?? 100;
+  if (!Number.isSafeInteger(pageCap) || pageCap < 1 || pageCap > 100) {
+    throw new Error("Invalid scheduled-message reconciliation page cap");
+  }
+  let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+  const scheduledMessages: { id: string; content: string; postAt: number }[] = [];
+  const targetId = normalizeSlackScheduledMessageId(input.scheduledMessageId);
+  for (let page = 0; page < pageCap; page++) {
+    const listing = await listScheduledMessages(client, {
+      channelId: input.channelId,
+      cursor,
+      limit: 100,
+    });
+    for (const scheduled of listing.scheduled_messages) {
+      const rawId = scheduled.id ?? scheduled.scheduled_message_id;
+      const channelId = getString(scheduled.channel_id) ?? getString(scheduled.channel);
+      const content = getString(scheduled.text);
+      const postAt = getNumber(scheduled.post_at);
+      if (
+        (typeof rawId !== "string" && typeof rawId !== "number") ||
+        channelId !== input.channelId ||
+        content === undefined ||
+        postAt === undefined
+      ) {
+        throw new Error("Slack returned an invalid scheduled message for receipt reconciliation");
+      }
+      if (!Number.isSafeInteger(postAt) || postAt < 0) {
+        throw new Error("Slack returned an invalid scheduled post_at for receipt reconciliation");
+      }
+      scheduledMessages.push({
+        id: normalizeSlackScheduledMessageId(rawId),
+        content,
+        postAt,
+      });
+    }
+
+    const nextCursor = listing.next_cursor?.trim();
+    if (!nextCursor) {
+      const target = scheduledMessages.find((scheduled) => scheduled.id === targetId);
+      if (!target) {
+        return undefined;
+      }
+      const targetHash = canonicalSlackTextContentSha256(target.content);
+      const equivalentCount = scheduledMessages.filter(
+        (scheduled) =>
+          scheduled.postAt === target.postAt &&
+          canonicalSlackTextContentSha256(scheduled.content) === targetHash,
+      ).length;
+      return { content: target.content, postAt: target.postAt, unique: equivalentCount === 1 };
+    }
+    if (seenCursors.has(nextCursor)) {
+      throw new Error("Slack repeated a scheduled-message pagination cursor");
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  throw new Error("Scheduled-message reconciliation exceeded its bounded page cap");
 }
 
 export function resolveSchedulePostAt(
