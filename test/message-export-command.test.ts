@@ -9,7 +9,7 @@ const originalError = console.error;
 afterEach(() => {
   console.log = originalLog;
   console.error = originalError;
-  process.exitCode = undefined;
+  process.exitCode = 0;
 });
 
 function buildProgram(ctx: CliContext): Command {
