@@ -42,8 +42,9 @@ forwarded-body lookalikes.
 
 For mutation automation driven by global message search, pass
 `search messages --require-complete-results`. It fails the command instead of silently
-skipping malformed, unresolvable, or unfetchable matches. It is incompatible with the
-`--channel` history fallback.
+skipping malformed, unresolvable, unfetchable, or non-canonical permalink matches, and
+validates the reported pagination before proving the result boundary. It is incompatible
+with the `--channel` history fallback.
 
 For scheduled writes, prefer `--schedule` with an ISO 8601 timestamp and explicit offset when timezone matters. Named `--schedule-in` phrases use the executing environment's local timezone; confirm that it matches the user's intent.
 

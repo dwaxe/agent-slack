@@ -21,8 +21,11 @@ forwarded, and unfurled lookalikes. Unknown or unsupported message surfaces set
 Without the flag, this field is omitted.
 
 `search messages --require-complete-results` produces no partial result when Slack
-returns a malformed or unresolvable match, or when a matching message cannot be fetched.
-The option applies only to global search and cannot be combined with `--channel`.
+returns a malformed or unresolvable match, lacks an exact matching permalink, or when a
+matching message cannot be fetched.
+It also requires coherent `page`, `pages`, and `total` pagination metadata and refuses
+short result pages before `min(total, limit)` matches are collected. The option applies
+only to global search and cannot be combined with `--channel`.
 
 Immediate non-attachment sends return `ts` and usually a `permalink`. Attachment sends return `ts` when Slack supplies share metadata; scheduled sends return `scheduled_message_id` and `post_at` instead.
 

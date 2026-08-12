@@ -502,6 +502,12 @@ message surface was present; mutation automation must refuse to act on incomplet
 unrecognized evidence schemas. The field is absent unless the flag is enabled, and the
 flag applies only to `message list`.
 
+For mutation workflows built from global search results, pass
+`search messages --require-complete-results`. It validates Slack's reported pagination
+and fails without partial output if a match is malformed, cannot resolve to a channel,
+has no exact matching permalink, or cannot be fetched. This option cannot be combined
+with `--channel` fallback search.
+
 When to use which:
 
 - Use `get` to check a single message or see if there's a thread worth expanding
