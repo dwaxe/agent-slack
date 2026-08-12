@@ -34,6 +34,11 @@ If a capability named here is absent from installed help, report version skew in
 
 For a local writing-style corpus, use `message export-own --workspace <url> --oldest <exact-ts> --latest <exact-ts>`, then anti-join its messages with `message receipts list --workspace <url> --oldest <exact-ts> --latest <exact-ts>`. The export is text-only, excludes DMs/group DMs, and does not hydrate messages or download files; check `complete` before consuming it.
 
+When automation needs canonical direct-notification targets, use
+`message list --include-mention-metadata`. Each listed message then has schema-versioned
+`mention_evidence`; it excludes quoted, code, plain-text, attachment, and forwarded-body
+lookalikes.
+
 For scheduled writes, prefer `--schedule` with an ISO 8601 timestamp and explicit offset when timezone matters. Named `--schedule-in` phrases use the executing environment's local timezone; confirm that it matches the user's intent.
 
 Named `later remind --in` values such as `tomorrow` or `monday` also use the executing environment's local timezone at 9:00. Confirm that timezone or pass an explicit Unix timestamp.
