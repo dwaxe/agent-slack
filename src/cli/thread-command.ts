@@ -6,6 +6,7 @@ import { buildSlackMessageUrl, parseSlackMessageUrl } from "../slack/url.ts";
 import { warnOnTruncatedSlackUrl } from "./message-url-warning.ts";
 import { getString, isRecord } from "../lib/object-type-guards.ts";
 import type { SlackApiClient, SlackAuth } from "../slack/client.ts";
+import { isUserId } from "../slack/user-id.ts";
 
 type ThreadSubscriptionEndpoint = {
   client: SlackApiClient;
@@ -17,6 +18,7 @@ async function resolveThreadSubscriptionEndpoint(input: {
   ctx: CliContext;
   workspaceClient: SlackApiClient;
   workspaceAuth: SlackAuth;
+  workspaceUserId: string;
 }): Promise<ThreadSubscriptionEndpoint> {
   if (input.workspaceAuth.auth_type !== "browser") {
     throw new Error("Thread unsubscribe requires browser auth (xoxc token and xoxd cookie).");
@@ -49,18 +51,14 @@ async function resolveThreadSubscriptionEndpoint(input: {
       "Enterprise Grid thread unsubscribe requires browser auth for the organization.",
     );
   }
-  const [workspaceIdentity, enterpriseIdentity] = await Promise.all([
-    input.workspaceClient.api("auth.test", {}),
-    enterprise.client.api("auth.test", {}),
-  ]);
+  const enterpriseIdentity = await enterprise.client.api("auth.test", {});
   if (getString(enterpriseIdentity.team_id)?.trim() !== enterpriseId) {
     throw new Error(
       "The resolved Enterprise Grid credentials do not match the target workspace's organization.",
     );
   }
-  const workspaceUserId = getString(workspaceIdentity.user_id)?.trim();
-  const enterpriseUserId = getString(enterpriseIdentity.user_id)?.trim();
-  if (!workspaceUserId || !enterpriseUserId || workspaceUserId !== enterpriseUserId) {
+  const enterpriseUserId = getString(enterpriseIdentity.user_id);
+  if (enterpriseUserId !== input.workspaceUserId) {
     throw new Error(
       "The workspace and Enterprise Grid credentials do not belong to the same Slack user.",
     );
@@ -71,10 +69,14 @@ async function resolveThreadSubscriptionEndpoint(input: {
 export async function unsubscribeThreadTarget(input: {
   ctx: CliContext;
   targetInput: string;
+  expectedUserId: string;
 }): Promise<Record<string, unknown>> {
   const ref = parseSlackMessageUrl(input.targetInput);
   if (!ref.workspace_url.startsWith("https://")) {
     throw new Error("Thread unsubscribe requires an https Slack message URL.");
+  }
+  if (!isUserId(input.expectedUserId)) {
+    throw new Error("--expected-user-id must be a canonical Slack user ID beginning with U or W.");
   }
   warnOnTruncatedSlackUrl(ref);
 
@@ -84,11 +86,26 @@ export async function unsubscribeThreadTarget(input: {
       const { client, auth, workspace_url } = await input.ctx.getClientForWorkspace(
         ref.workspace_url,
       );
+      if (auth.auth_type !== "browser") {
+        throw new Error("Thread unsubscribe requires browser auth (xoxc token and xoxd cookie).");
+      }
+
+      // Bind every attempt, including an automatic post-refresh retry, to the
+      // explicitly expected actor before any workspace or subscription lookup.
+      const identity = await client.api("auth.test", {});
+      const userId = getString(identity.user_id);
+      if (userId !== input.expectedUserId) {
+        throw new Error(
+          "Authenticated Slack user does not match --expected-user-id; refusing to unsubscribe.",
+        );
+      }
+
       const threadTs = ref.thread_ts_hint ?? ref.message_ts;
       const subscription = await resolveThreadSubscriptionEndpoint({
         ctx: input.ctx,
         workspaceClient: client,
         workspaceAuth: auth,
+        workspaceUserId: userId,
       });
       const result = await unsubscribeThread({
         client,
@@ -101,6 +118,7 @@ export async function unsubscribeThreadTarget(input: {
       const resolvedWorkspaceUrl = workspace_url ?? ref.workspace_url;
       return pruneEmpty({
         ...result,
+        user_id: userId,
         workspace_url: resolvedWorkspaceUrl,
         permalink: buildSlackMessageUrl({
           workspace_url: resolvedWorkspaceUrl,
@@ -123,12 +141,17 @@ export function registerThreadCommand(input: { program: Command; ctx: CliContext
       "Unsubscribe from one thread (requires browser auth; uses an unsupported Slack API)",
     )
     .argument("<target>", "Exact Slack message URL for the thread root or one of its replies")
+    .requiredOption(
+      "--expected-user-id <id>",
+      "Required canonical Slack actor ID (U... or W...); must match auth.test before subscription access",
+    )
     .action(async (...args) => {
-      const [targetInput] = args as [string];
+      const [targetInput, options] = args as [string, { expectedUserId: string }];
       try {
         const payload = await unsubscribeThreadTarget({
           ctx: input.ctx,
           targetInput,
+          expectedUserId: options.expectedUserId,
         });
         console.log(JSON.stringify(payload, null, 2));
       } catch (err: unknown) {

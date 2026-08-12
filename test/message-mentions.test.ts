@@ -33,7 +33,8 @@ describe("compact message notification mentions", () => {
     });
 
     expect(message.mention_evidence).toEqual({
-      schema: 1,
+      schema: 2,
+      complete: true,
       user_ids: ["U11111111", "W22222222"],
       usergroup_ids: ["S11111111", "S22222222"],
     });
@@ -56,7 +57,8 @@ describe("compact message notification mentions", () => {
     });
 
     expect(message.mention_evidence).toEqual({
-      schema: 1,
+      schema: 2,
+      complete: true,
       user_ids: ["U99999999"],
       usergroup_ids: ["S99999999"],
     });
@@ -78,12 +80,14 @@ describe("compact message notification mentions", () => {
     });
 
     expect(sameLine.mention_evidence).toEqual({
-      schema: 1,
+      schema: 2,
+      complete: true,
       user_ids: ["U11111111", "U33333333"],
       usergroup_ids: ["S11111111"],
     });
     expect(unclosed.mention_evidence).toEqual({
-      schema: 1,
+      schema: 2,
+      complete: true,
       user_ids: ["U44444444"],
       usergroup_ids: [],
     });
@@ -109,7 +113,8 @@ describe("compact message notification mentions", () => {
     });
 
     expect(message.mention_evidence).toEqual({
-      schema: 1,
+      schema: 2,
+      complete: false,
       user_ids: [],
       usergroup_ids: [],
     });
@@ -141,7 +146,8 @@ describe("compact message notification mentions", () => {
     });
 
     expect(message.mention_evidence).toEqual({
-      schema: 1,
+      schema: 2,
+      complete: false,
       user_ids: ["U11111111", "W33333333"],
       usergroup_ids: ["S11111111"],
     });
@@ -180,7 +186,8 @@ describe("compact message notification mentions", () => {
     });
 
     expect(message.mention_evidence).toEqual({
-      schema: 1,
+      schema: 2,
+      complete: true,
       user_ids: ["U11111111", "W22222222"],
       usergroup_ids: ["S11111111", "S22222222"],
     });
@@ -212,7 +219,8 @@ describe("compact message notification mentions", () => {
     });
 
     expect(message.mention_evidence).toEqual({
-      schema: 1,
+      schema: 2,
+      complete: true,
       user_ids: [],
       usergroup_ids: [],
     });
@@ -256,7 +264,8 @@ describe("compact message notification mentions", () => {
 
     expect(message.content).toContain("Forwarded");
     expect(message.mention_evidence).toEqual({
-      schema: 1,
+      schema: 2,
+      complete: true,
       user_ids: [],
       usergroup_ids: [],
     });
@@ -310,7 +319,8 @@ describe("compact message notification mentions", () => {
         author: { user_id: "U99999999" },
         content: "Ping <!subteam^S11111111>",
         mention_evidence: {
-          schema: 1,
+          schema: 2,
+          complete: true,
           user_ids: [],
           usergroup_ids: ["S11111111"],
         },
@@ -320,7 +330,8 @@ describe("compact message notification mentions", () => {
         author: { user_id: "U88888888" },
         content: reply.text,
         mention_evidence: {
-          schema: 1,
+          schema: 2,
+          complete: true,
           user_ids: [],
           usergroup_ids: [],
         },

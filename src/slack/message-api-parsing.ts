@@ -1,6 +1,7 @@
 import type { SlackApiClient } from "./client.ts";
-import type { SlackFileSummary } from "./messages.ts";
+import type { SlackFileSummary, SlackMessageSummary } from "./messages.ts";
 import { getNumber, getString, isRecord } from "../lib/object-type-guards.ts";
+import { slackMrkdwnToMarkdown } from "./mrkdwn.ts";
 
 export function toSlackFileSummary(value: unknown): SlackFileSummary | null {
   if (!isRecord(value)) {
@@ -21,6 +22,34 @@ export function toSlackFileSummary(value: unknown): SlackFileSummary | null {
     url_private: getString(value.url_private),
     url_private_download: getString(value.url_private_download),
     size: getNumber(value.size),
+  };
+}
+
+export function toSlackMessageSummary(input: {
+  channelId: string;
+  message: Record<string, unknown>;
+  fallbackTs?: string;
+  files?: SlackFileSummary[];
+}): SlackMessageSummary {
+  const text = getString(input.message.text) ?? "";
+  return {
+    channel_id: input.channelId,
+    ts: getString(input.message.ts) ?? input.fallbackTs ?? "",
+    thread_ts: getString(input.message.thread_ts),
+    reply_count: getNumber(input.message.reply_count),
+    user: getString(input.message.user),
+    bot_id: getString(input.message.bot_id),
+    text,
+    markdown: slackMrkdwnToMarkdown(text),
+    // Preserve malformed/future values so notification evidence can fail closed
+    // instead of silently treating them as Slack's default `true`.
+    mrkdwn: input.message.mrkdwn,
+    blocks: input.message.blocks,
+    attachments: input.message.attachments,
+    files: input.files && input.files.length > 0 ? input.files : undefined,
+    reactions: Array.isArray(input.message.reactions)
+      ? (input.message.reactions as unknown[])
+      : undefined,
   };
 }
 

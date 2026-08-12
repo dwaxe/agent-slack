@@ -12,14 +12,21 @@ Slack data commands print JSON to stdout. Help, update, and some authentication 
 `message receipts list` returns schema-versioned local mutation provenance for an exact inclusive `oldest`/`latest` window with `tracking_started_at`, `unresolved_intent_count`, `incomplete_reasons`, and raw/canonical content hashes, never message plaintext. `complete` requires coverage of the pre-window 120-day scheduling horizon, no in-window unresolved write-ahead intent, and a canonical hash for each timestamp-less receipt. Use `(channel_id, ts)` first; only when `ts` is absent, use `(channel_id, canonical_content_sha256)` as the fallback identity.
 
 `message list --include-mention-metadata` adds
-`mention_evidence: { schema: 1, user_ids: [...], usergroup_ids: [...] }` to every
-listed message. Both ID arrays remain present when empty. Evidence covers only direct
-top-level notification mentions and excludes quoted, code, plain-text, attachment, and
-forwarded-body lookalikes. Without the flag, this field is omitted.
+`mention_evidence: { schema: 2, complete: boolean, user_ids: [...], usergroup_ids: [...] }`
+to every listed message. Both ID arrays remain present when empty. Evidence covers only
+direct mentions from mrkdwn-enabled top-level text, known semantic blocks, and explicitly
+mrkdwn-enabled fields in normal legacy attachments. It excludes quoted, code, plain-text,
+forwarded, and unfurled lookalikes. Unknown or unsupported message surfaces set
+`complete: false`; mutation workflows must reject incomplete or unrecognized schemas.
+Without the flag, this field is omitted.
+
+`search messages --require-complete-results` produces no partial result when Slack
+returns a malformed or unresolvable match, or when a matching message cannot be fetched.
+The option applies only to global search and cannot be combined with `--channel`.
 
 Immediate non-attachment sends return `ts` and usually a `permalink`. Attachment sends return `ts` when Slack supplies share metadata; scheduled sends return `scheduled_message_id` and `post_at` instead.
 
-`thread unsubscribe` returns `status: "unsubscribed"` after a verified change or `status: "already_unsubscribed"` after an idempotent no-op, plus the canonical workspace, channel, thread timestamp, and root permalink. Both successful states report `subscribed: false`.
+`thread unsubscribe` returns `status: "unsubscribed"` after a verified change or `status: "already_unsubscribed"` after an idempotent no-op, plus the verified `user_id`, canonical workspace, channel, thread timestamp, and root permalink. Both successful states report `subscribed: false`.
 
 `canvas create` returns `canvas: { id, title?, channel_id? }`. `canvas get` returns `canvas: { id, title?, markdown }`.
 

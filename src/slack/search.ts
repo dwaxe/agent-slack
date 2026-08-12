@@ -27,6 +27,7 @@ export type SearchOptions = {
   download?: boolean;
   resolve_users?: boolean;
   refresh_users?: boolean;
+  require_complete_results?: boolean;
 };
 
 export type SearchResult = {
@@ -46,6 +47,9 @@ export async function searchSlack(input: {
   const download = input.options.download ?? true;
   if (!download && (input.options.kind === "files" || input.options.kind === "all")) {
     throw new Error("File search requires downloads enabled (so agents get local file paths).");
+  }
+  if (input.options.require_complete_results && input.options.channels?.length) {
+    throw new Error("--require-complete-results is not supported with --channel fallback search");
   }
 
   const slackQuery = await buildSlackSearchQuery(input.client, {
@@ -78,7 +82,11 @@ export async function searchSlack(input: {
       out.messages = messageResult.messages;
       out.referenced_users = messageResult.referenced_users;
     } else {
-      const rawMatches = await searchMessagesRaw(input.client, { query: slackQuery, limit });
+      const rawMatches = await searchMessagesRaw(input.client, {
+        query: slackQuery,
+        limit,
+        requireCompleteResults: input.options.require_complete_results,
+      });
       const messageResult = await searchMessagesViaSearchApi(input.client, {
         auth: input.auth,
         workspace_url: input.options.workspace_url,
@@ -90,6 +98,7 @@ export async function searchSlack(input: {
         rawMatches,
         resolveUsers: input.options.resolve_users,
         refreshUsers: input.options.refresh_users,
+        requireCompleteResults: input.options.require_complete_results,
       });
       out.messages = messageResult.messages;
       out.referenced_users = messageResult.referenced_users;

@@ -96,7 +96,8 @@ agent-slack
 │       ├── add    <target> <emoji>
 │       └── remove <target> <emoji>
 ├── thread
-│   └── unsubscribe <message-url>    # stop following one exact thread
+│   └── unsubscribe --expected-user-id <U...|W...> <message-url>
+│                                      # stop following one exact thread as one verified actor
 ├── channel
 │   ├── list                        # list conversations (user-scoped or all)
 │   ├── new                         # create channel
@@ -208,6 +209,9 @@ agent-slack message list "#general" --limit 20
 # Include machine-readable direct notification mentions on every listed message
 agent-slack message list "#general" --limit 20 --include-mention-metadata
 
+# Fail instead of silently skipping incomplete global message-search matches
+agent-slack search messages "alias" --require-complete-results
+
 # Recent channel messages that are marked with :eyes:
 agent-slack message list "#general" --with-reaction eyes --oldest "1770165109.000000" --limit 20
 
@@ -247,14 +251,16 @@ Mutation receipts are kept locally under `$XDG_STATE_HOME/agent-slack/` (or `~/.
 Stop following one exact thread by passing its root or reply permalink:
 
 ```bash
-agent-slack thread unsubscribe "https://workspace.slack.com/archives/C123/p1700000000000000"
+agent-slack thread unsubscribe --expected-user-id U12345678 \
+  "https://workspace.slack.com/archives/C123/p1700000000000000"
 ```
 
 This command requires browser-style auth (xoxc/xoxd). It reads the current subscription,
 uses Slack's undocumented `subscriptions.thread.remove` client endpoint, and reads the
 subscription state back to verify `subscribed: false`. Running it again returns
 `status: "already_unsubscribed"` without repeating the mutation. Only exact HTTPS Slack
-message URLs are accepted.
+message URLs are accepted. `--expected-user-id` must be a canonical `U...` or `W...` ID;
+every credential attempt must match it through `auth.test` before subscription access.
 
 ### Compose a message (browser editor)
 
@@ -480,17 +486,21 @@ including both arrays when they are empty:
 ```json
 {
   "mention_evidence": {
-    "schema": 1,
+    "schema": 2,
+    "complete": true,
     "user_ids": ["U12345678"],
     "usergroup_ids": ["S12345678"]
   }
 }
 ```
 
-Evidence is limited to direct, unescaped mentions in the message's top-level raw text
-and semantic top-level blocks. It excludes plain-text lookalikes, blockquotes, inline
-or fenced code, and forwarded or attachment bodies. The field is absent unless the
-flag is enabled, and the flag applies only to `message list`.
+Evidence is limited to direct, unescaped mentions in mrkdwn-enabled top-level text,
+known semantic block surfaces, and normal legacy attachment fields explicitly enabled
+by `mrkdwn_in`. It excludes plain-text lookalikes, blockquotes, inline or fenced code,
+and forwarded or unfurled bodies. `complete: false` means an unknown or unsupported
+message surface was present; mutation automation must refuse to act on incomplete or
+unrecognized evidence schemas. The field is absent unless the flag is enabled, and the
+flag applies only to `message list`.
 
 When to use which:
 

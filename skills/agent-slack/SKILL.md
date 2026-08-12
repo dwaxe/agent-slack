@@ -35,9 +35,15 @@ If a capability named here is absent from installed help, report version skew in
 For a local writing-style corpus, use `message export-own --workspace <url> --oldest <exact-ts> --latest <exact-ts>`, then anti-join its messages with `message receipts list --workspace <url> --oldest <exact-ts> --latest <exact-ts>`. The export is text-only, excludes DMs/group DMs, and does not hydrate messages or download files; check `complete` before consuming it.
 
 When automation needs canonical direct-notification targets, use
-`message list --include-mention-metadata`. Each listed message then has schema-versioned
-`mention_evidence`; it excludes quoted, code, plain-text, attachment, and forwarded-body
-lookalikes.
+`message list --include-mention-metadata`. Each listed message then has schema 2
+`mention_evidence` with a `complete` boolean. Mutation workflows must require the exact
+known schema and `complete: true`; evidence excludes quoted, code, plain-text, and
+forwarded-body lookalikes.
+
+For mutation automation driven by global message search, pass
+`search messages --require-complete-results`. It fails the command instead of silently
+skipping malformed, unresolvable, or unfetchable matches. It is incompatible with the
+`--channel` history fallback.
 
 For scheduled writes, prefer `--schedule` with an ISO 8601 timestamp and explicit offset when timezone matters. Named `--schedule-in` phrases use the executing environment's local timezone; confirm that it matches the user's intent.
 
@@ -47,7 +53,7 @@ Ordinary `message send` and `message edit` calls auto-convert lists. `message se
 
 Slack-native drafts (`message draft list|create|update|delete`) manage drafts that appear in the user's Slack client; `create` posts nothing. They use undocumented session endpoints and require browser-style auth (xoxc/xoxd).
 
-`thread unsubscribe <message-url>` stops following one exact thread. It requires an exact HTTPS Slack message URL and browser-style auth, uses an undocumented session endpoint, and verifies the resulting subscription state.
+`thread unsubscribe --expected-user-id <U...|W...> <message-url>` stops following one exact thread. It requires an exact HTTPS Slack message URL and browser-style auth, verifies the authenticated actor before subscription access, uses an undocumented session endpoint, and verifies the resulting subscription state.
 
 ## Conditional references
 

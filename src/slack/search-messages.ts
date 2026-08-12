@@ -1,5 +1,5 @@
 import type { SlackApiClient, SlackAuth } from "./client.ts";
-import type { CompactSlackMessage, SlackFileSummary, SlackMessageSummary } from "./messages.ts";
+import type { CompactSlackMessage, SlackMessageSummary } from "./messages.ts";
 import { fetchMessage, toCompactMessage } from "./messages.ts";
 import { resolveChannelId } from "./channels.ts";
 import { ensureDownloadsDir } from "../lib/tmp-paths.ts";
@@ -8,10 +8,10 @@ import { renderSlackMessageContent } from "./render.ts";
 import { parseSlackMessageUrl } from "./url.ts";
 import { inferExt } from "./search-file-ext.ts";
 import { dateToUnixSeconds, resolveUserId } from "./search-query.ts";
-import { asArray, getNumber, getString, isRecord } from "../lib/object-type-guards.ts";
-import { slackMrkdwnToMarkdown } from "./mrkdwn.ts";
+import { asArray, getString, isRecord } from "../lib/object-type-guards.ts";
 import { collectReferencedUserIds, resolveUsersById, toReferencedUsers } from "./user-cache.ts";
 import type { CompactSlackUser } from "./users.ts";
+import { toSlackFileSummary, toSlackMessageSummary } from "./message-api-parsing.ts";
 
 export type ContentType = "any" | "text" | "image" | "snippet" | "file";
 export type SearchMessageResult = {
@@ -32,6 +32,7 @@ export async function searchMessagesViaSearchApi(
     rawMatches: Record<string, unknown>[];
     resolveUsers?: boolean;
     refreshUsers?: boolean;
+    requireCompleteResults?: boolean;
   },
 ): Promise<SearchMessageResult> {
   const matches = input.rawMatches;
@@ -47,16 +48,35 @@ export async function searchMessagesViaSearchApi(
   for (const m of matches) {
     const ts = getString(m.ts)?.trim() ?? "";
     if (!ts) {
+      if (input.requireCompleteResults) {
+        throw new Error(
+          "Slack search returned a message without a timestamp; refusing partial output",
+        );
+      }
       continue;
     }
     const channelValue = isRecord(m.channel) ? m.channel : null;
-    const channelId =
-      channelValue && getString(channelValue.id)
-        ? getString(channelValue.id)!
-        : channelValue && getString(channelValue.name)
-          ? await resolveChannelId(client, `#${getString(channelValue.name)}`)
-          : "";
+    const rawChannelId = channelValue ? getString(channelValue.id) : undefined;
+    if (input.requireCompleteResults && rawChannelId !== undefined && !rawChannelId.trim()) {
+      throw new Error("Slack search returned an invalid message channel; refusing partial output");
+    }
+    let channelId = rawChannelId?.trim() ?? "";
+    if (!channelId && channelValue && getString(channelValue.name)) {
+      try {
+        channelId = await resolveChannelId(client, `#${getString(channelValue.name)}`);
+      } catch (err: unknown) {
+        if (input.requireCompleteResults) {
+          throw new Error("Slack search returned an unresolvable message channel", { cause: err });
+        }
+        continue;
+      }
+    }
     if (!channelId) {
+      if (input.requireCompleteResults) {
+        throw new Error(
+          "Slack search returned a message without a channel; refusing partial output",
+        );
+      }
       continue;
     }
     messageRefs.push({
@@ -97,7 +117,13 @@ export async function searchMessagesViaSearchApi(
           raw: parsed?.raw ?? ref.permalink ?? `${ref.channel_id}:${ref.message_ts}`,
         },
       });
-    } catch {
+    } catch (err: unknown) {
+      if (input.requireCompleteResults) {
+        throw new Error(
+          `Could not fetch complete Slack search result ${ref.channel_id}:${ref.message_ts}`,
+          { cause: err },
+        );
+      }
       continue;
     }
 
@@ -346,49 +372,12 @@ async function downloadFilesForMessage(input: {
   }
 }
 
-function messageSummaryFromApiMessage(
+export function messageSummaryFromApiMessage(
   channelId: string,
   msg: Record<string, unknown>,
 ): SlackMessageSummary {
-  const text = getString(msg.text) ?? "";
   const files = asArray(msg.files)
     .map((f) => toSlackFileSummary(f))
-    .filter((f): f is SlackFileSummary => f !== null);
-
-  return {
-    channel_id: channelId,
-    ts: getString(msg.ts) ?? "",
-    thread_ts: getString(msg.thread_ts),
-    reply_count: getNumber(msg.reply_count),
-    user: getString(msg.user),
-    bot_id: getString(msg.bot_id),
-    text,
-    markdown: slackMrkdwnToMarkdown(text),
-    blocks: Array.isArray(msg.blocks) ? (msg.blocks as unknown[]) : undefined,
-    attachments: Array.isArray(msg.attachments) ? (msg.attachments as unknown[]) : undefined,
-    files: files.length > 0 ? files : undefined,
-    reactions: Array.isArray(msg.reactions) ? (msg.reactions as unknown[]) : undefined,
-  };
-}
-
-function toSlackFileSummary(value: unknown): SlackFileSummary | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-  const id = getString(value.id);
-  if (!id) {
-    return null;
-  }
-  return {
-    id,
-    name: getString(value.name),
-    title: getString(value.title),
-    mimetype: getString(value.mimetype),
-    filetype: getString(value.filetype),
-    mode: getString(value.mode),
-    permalink: getString(value.permalink),
-    url_private: getString(value.url_private),
-    url_private_download: getString(value.url_private_download),
-    size: getNumber(value.size),
-  };
+    .filter((file): file is NonNullable<typeof file> => file !== null);
+  return toSlackMessageSummary({ channelId, message: msg, files });
 }

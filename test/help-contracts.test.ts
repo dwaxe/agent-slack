@@ -5,6 +5,7 @@ import { registerChannelCommand } from "../src/cli/channel-command.ts";
 import type { CliContext } from "../src/cli/context.ts";
 import { registerLaterCommand } from "../src/cli/later-command.ts";
 import { registerMessageCommand } from "../src/cli/message-command.ts";
+import { registerSearchCommand } from "../src/cli/search-command.ts";
 import { registerUserCommand } from "../src/cli/user-command.ts";
 import { registerUserGroupCommand } from "../src/cli/usergroup-command.ts";
 import { registerThreadCommand } from "../src/cli/thread-command.ts";
@@ -39,6 +40,7 @@ function buildProgram(): Command {
   registerUserCommand({ program, ctx });
   registerUserGroupCommand({ program, ctx });
   registerThreadCommand({ program, ctx });
+  registerSearchCommand({ program, ctx });
   return program;
 }
 
@@ -48,8 +50,18 @@ describe("agent-facing help contracts", () => {
     const list = findCommand(program, "message", "list");
     const get = findCommand(program, "message", "get");
 
-    expect(optionDescription(list, "--include-mention-metadata")).toContain("schema-versioned");
+    expect(optionDescription(list, "--include-mention-metadata")).toBe(
+      "Include schema 2 direct-notification evidence (complete or incomplete) per message",
+    );
     expect(get.options.some((option) => option.long === "--include-mention-metadata")).toBe(false);
+  });
+
+  test("message search exposes fail-closed result handling", () => {
+    const messages = findCommand(buildProgram(), "search", "messages");
+
+    expect(optionDescription(messages, "--require-complete-results")).toContain(
+      "malformed, unresolvable, or unfetchable",
+    );
   });
 
   test("message send documents non-obvious formatting and scheduling behavior", () => {
@@ -164,9 +176,12 @@ describe("agent-facing help contracts", () => {
 
   test("thread unsubscribe documents its target, auth, and API constraints", () => {
     const unsubscribe = findCommand(buildProgram(), "thread", "unsubscribe");
+    const expectedUser = unsubscribe.options.find((option) => option.long === "--expected-user-id");
 
     expect(unsubscribe.description()).toContain("requires browser auth");
     expect(unsubscribe.description()).toContain("unsupported Slack API");
     expect(unsubscribe.registeredArguments[0]?.description).toContain("Exact Slack message URL");
+    expect(expectedUser?.mandatory).toBe(true);
+    expect(optionDescription(unsubscribe, "--expected-user-id")).toContain("auth.test");
   });
 });
