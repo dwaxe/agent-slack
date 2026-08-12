@@ -24,14 +24,27 @@ import {
   toReferencedUsers,
 } from "../slack/user-cache.ts";
 import { isRecord } from "../lib/object-type-guards.ts";
+import { isUserId } from "../slack/user-id.ts";
+
+const CANONICAL_MESSAGE_TS = /^\d+\.\d{6}$/;
+const CANONICAL_BOT_ID = /^B[A-Z0-9]{8,}$/;
 
 function toMetadataOnlyListMessage(message: CompactSlackMessage): Record<string, unknown> {
-  if (!message.author) {
+  if (!CANONICAL_MESSAGE_TS.test(message.ts)) {
+    throw new Error("Metadata-only message is missing its validated canonical timestamp");
+  }
+  const { author } = message;
+  if (
+    !author ||
+    (author.user_id !== undefined && !isUserId(author.user_id)) ||
+    (author.bot_id !== undefined && !CANONICAL_BOT_ID.test(author.bot_id)) ||
+    (author.user_id === undefined && author.bot_id === undefined)
+  ) {
     throw new Error("Metadata-only message is missing its validated author identity");
   }
   return {
     ts: message.ts,
-    author: message.author,
+    author,
     mention_evidence: message.mention_evidence,
   };
 }

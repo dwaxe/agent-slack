@@ -87,7 +87,7 @@ describe("credential ingestion", () => {
     });
   });
 
-  test("hydrates only workspace-scoped browser cookies", async () => {
+  test("prefers workspace-scoped cookies and migrates a valid legacy cookie", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-slack-credentials-"));
     const credentialsFile = join(dir, "credentials.json");
     const browserWorkspace = (workspace_url: string) => ({
@@ -103,6 +103,7 @@ describe("credential ingestion", () => {
       ["xoxd:https://team.slack.com", "xoxd-commercial"],
       ["xoxd:https://agency.slack-gov.com", "xoxd-gov"],
     ]);
+    const writes: { account: string; value: string }[] = [];
 
     try {
       await writeFile(
@@ -120,13 +121,65 @@ describe("credential ingestion", () => {
       const credentials = await loadCredentials({
         credentialsFile,
         keychainRead: (account) => keychain.get(account) ?? null,
+        keychainWrite: ({ account, value }) => {
+          writes.push({ account, value });
+          keychain.set(account, value);
+          return true;
+        },
       });
 
       expect(
         credentials.workspaces.map((workspace) =>
           workspace.auth.auth_type === "browser" ? workspace.auth.xoxd_cookie : null,
         ),
-      ).toEqual(["xoxd-commercial", "xoxd-gov", "__KEYCHAIN__"]);
+      ).toEqual(["xoxd-commercial", "xoxd-gov", "xoxd-unscoped-legacy"]);
+      expect(writes).toEqual([
+        {
+          account: "xoxd:https://legacy-only.slack.com",
+          value: "xoxd-unscoped-legacy",
+        },
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses to migrate a malformed legacy browser cookie", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-slack-credentials-"));
+    const credentialsFile = join(dir, "credentials.json");
+    const writes: string[] = [];
+    try {
+      await writeFile(
+        credentialsFile,
+        JSON.stringify({
+          version: 1,
+          workspaces: [
+            {
+              workspace_url: "https://team.slack.com",
+              auth: {
+                auth_type: "browser",
+                xoxc_token: "xoxc-file",
+                xoxd_cookie: "__KEYCHAIN__",
+              },
+            },
+          ],
+        }),
+      );
+
+      const credentials = await loadCredentials({
+        credentialsFile,
+        keychainRead: (account) => (account === "xoxd" ? "not-a-browser-cookie" : null),
+        keychainWrite: ({ account }) => {
+          writes.push(account);
+          return true;
+        },
+      });
+
+      expect(credentials.workspaces[0]?.auth).toMatchObject({
+        auth_type: "browser",
+        xoxd_cookie: "__KEYCHAIN__",
+      });
+      expect(writes).toEqual([]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

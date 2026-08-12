@@ -8,6 +8,8 @@ import { isRecord } from "../lib/object-type-guards.ts";
 import { normalizeSlackWorkspaceUrl } from "../slack/workspace-url.ts";
 
 const KEYCHAIN_PLACEHOLDER = "__KEYCHAIN__";
+const LEGACY_BROWSER_COOKIE_ACCOUNT = "xoxd";
+const BROWSER_COOKIE_PATTERN = /^xoxd-[A-Za-z0-9%/+_=.-]+$/;
 const IS_MACOS = platform() === "darwin";
 const INVALID_STORED_CREDENTIALS_ERROR =
   "Stored credentials are invalid; refusing to use or overwrite them.";
@@ -18,6 +20,10 @@ function browserCookieAccount(workspaceUrl: string): string {
 
 function isPlaceholderSecret(value: string | undefined): boolean {
   return !value || value === KEYCHAIN_PLACEHOLDER;
+}
+
+function isValidBrowserCookie(value: string | null): value is string {
+  return Boolean(value && BROWSER_COOKIE_PATTERN.test(value));
 }
 
 export async function readStoredCredentials(
@@ -43,15 +49,35 @@ export async function readStoredCredentials(
 export async function loadCredentials(options?: {
   credentialsFile?: string;
   keychainRead?: typeof keychainGet;
+  keychainWrite?: typeof keychainSet;
 }): Promise<Credentials> {
   // Optional: hydrate browser cookie/token from keychain for security.
   const creds = await readStoredCredentials(options?.credentialsFile);
   const readKeychain = options?.keychainRead ?? keychainGet;
+  const writeKeychain = options?.keychainWrite ?? keychainSet;
+  let legacyBrowserCookie: string | null | undefined;
+  const readLegacyBrowserCookie = (): string | null => {
+    if (legacyBrowserCookie === undefined) {
+      const candidate = readKeychain(LEGACY_BROWSER_COOKIE_ACCOUNT, KEYCHAIN_SERVICE);
+      legacyBrowserCookie = isValidBrowserCookie(candidate) ? candidate : null;
+    }
+    return legacyBrowserCookie;
+  };
   const hydrated = creds.workspaces.map((w) => {
     if (w.auth.auth_type === "browser") {
       const account = `xoxc:${normalizeSlackWorkspaceUrl(w.workspace_url)}`;
       const xoxc = readKeychain(account, KEYCHAIN_SERVICE);
-      const xoxd = readKeychain(browserCookieAccount(w.workspace_url), KEYCHAIN_SERVICE);
+      const cookieAccount = browserCookieAccount(w.workspace_url);
+      let xoxd = readKeychain(cookieAccount, KEYCHAIN_SERVICE);
+      if (!xoxd && w.auth.xoxd_cookie === KEYCHAIN_PLACEHOLDER) {
+        const legacy = readLegacyBrowserCookie();
+        if (legacy) {
+          // Older releases stored one session cookie under the global `xoxd` account.
+          // Copy only a syntactically valid legacy cookie into this validated workspace scope.
+          writeKeychain({ account: cookieAccount, value: legacy, service: KEYCHAIN_SERVICE });
+          xoxd = legacy;
+        }
+      }
       return {
         ...w,
         auth: {

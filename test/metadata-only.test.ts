@@ -120,6 +120,45 @@ describe("metadata-only reads", () => {
     }
   });
 
+  test("channel history rejects noncanonical metadata-only identities", async () => {
+    const canonicalTs = "1700000000.000001";
+    const malformedMessages = [
+      { ts: "1700000000.1", user: "U11111111" },
+      { ts: canonicalTs, user: "not-a-user" },
+      { ts: canonicalTs, bot_id: "not-a-bot" },
+      { ts: canonicalTs },
+    ];
+
+    for (const message of malformedMessages) {
+      const client = {
+        api: async (method: string) => {
+          if (method === "conversations.history") {
+            return { messages: [message] };
+          }
+          throw new Error(`Unexpected Slack method: ${method}`);
+        },
+      };
+      const ctx = {
+        effectiveWorkspaceUrl: () => "https://workspace.slack.com",
+        assertWorkspaceSpecifiedForChannelNames: async () => {},
+        withAutoRefresh: async (input: { work: () => Promise<unknown> }) => await input.work(),
+        getClientForWorkspace: async () => ({
+          client,
+          auth: { auth_type: "standard", token: "test-token" },
+          workspace_url: "https://workspace.slack.com",
+        }),
+      } as unknown as CliContext;
+
+      await expect(
+        handleMessageList({
+          ctx,
+          targetInput: "C12345678",
+          options: { maxBodyChars: "8000", metadataOnly: true },
+        }),
+      ).rejects.toThrow(/validated (canonical timestamp|author identity)/);
+    }
+  });
+
   test("search returns only strictly validated refs without hydrating or downloading messages", async () => {
     const calls: ApiCall[] = [];
     const permalink = "https://workspace.slack.com/archives/C12345678/p1700000000000001";
