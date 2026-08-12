@@ -46,6 +46,7 @@ function createContext(input?: {
               ok: true,
               team_id: "T12345678",
               user_id: input?.workspaceUserId ?? expectedUserId,
+              url: workspaceUrl,
             }
           : {
               ok: true,

@@ -19,6 +19,9 @@ export type SearchMessageResult = {
   referenced_users?: Record<string, CompactSlackUser>;
 };
 
+const CANONICAL_MESSAGE_TS = /^\d+\.\d{6}$/;
+const CANONICAL_CHANNEL_ID = /^[CDG][A-Z0-9]{8,}$/;
+
 export async function searchMessagesViaSearchApi(
   client: SlackApiClient,
   input: {
@@ -33,6 +36,7 @@ export async function searchMessagesViaSearchApi(
     resolveUsers?: boolean;
     refreshUsers?: boolean;
     requireCompleteResults?: boolean;
+    metadataOnly?: boolean;
   },
 ): Promise<SearchMessageResult> {
   const matches = input.rawMatches;
@@ -48,16 +52,25 @@ export async function searchMessagesViaSearchApi(
   for (const m of matches) {
     const ts = getString(m.ts)?.trim() ?? "";
     if (!ts) {
-      if (input.requireCompleteResults) {
+      if (input.requireCompleteResults || input.metadataOnly) {
         throw new Error(
           "Slack search returned a message without a timestamp; refusing partial output",
         );
       }
       continue;
     }
+    if ((input.requireCompleteResults || input.metadataOnly) && !CANONICAL_MESSAGE_TS.test(ts)) {
+      throw new Error(
+        "Slack search returned a message without a canonical timestamp; refusing partial output",
+      );
+    }
     const channelValue = isRecord(m.channel) ? m.channel : null;
     const rawChannelId = channelValue ? getString(channelValue.id) : undefined;
-    if (input.requireCompleteResults && rawChannelId !== undefined && !rawChannelId.trim()) {
+    if (
+      (input.requireCompleteResults || input.metadataOnly) &&
+      rawChannelId !== undefined &&
+      !rawChannelId.trim()
+    ) {
       throw new Error("Slack search returned an invalid message channel; refusing partial output");
     }
     let channelId = rawChannelId?.trim() ?? "";
@@ -65,22 +78,30 @@ export async function searchMessagesViaSearchApi(
       try {
         channelId = await resolveChannelId(client, `#${getString(channelValue.name)}`);
       } catch (err: unknown) {
-        if (input.requireCompleteResults) {
+        if (input.requireCompleteResults || input.metadataOnly) {
           throw new Error("Slack search returned an unresolvable message channel", { cause: err });
         }
         continue;
       }
     }
     if (!channelId) {
-      if (input.requireCompleteResults) {
+      if (input.requireCompleteResults || input.metadataOnly) {
         throw new Error(
           "Slack search returned a message without a channel; refusing partial output",
         );
       }
       continue;
     }
+    if (
+      (input.requireCompleteResults || input.metadataOnly) &&
+      !CANONICAL_CHANNEL_ID.test(channelId)
+    ) {
+      throw new Error(
+        "Slack search returned a message without a canonical channel ID; refusing partial output",
+      );
+    }
     const permalink = getString(m.permalink)?.trim();
-    if (input.requireCompleteResults) {
+    if (input.requireCompleteResults || input.metadataOnly) {
       if (!permalink) {
         throw new Error(
           "Slack search returned a message without a permalink; refusing partial output",
@@ -118,6 +139,23 @@ export async function searchMessagesViaSearchApi(
     if (messageRefs.length >= input.limit) {
       break;
     }
+  }
+
+  if (input.metadataOnly) {
+    return {
+      messages: messageRefs.map((ref) => {
+        if (!ref.permalink) {
+          throw new Error(
+            "Slack search returned a message without a permalink; refusing partial output",
+          );
+        }
+        return {
+          channel_id: ref.channel_id,
+          ts: ref.message_ts,
+          permalink: ref.permalink,
+        };
+      }),
+    };
   }
 
   const downloadedPaths: Record<string, DownloadResult> = {};

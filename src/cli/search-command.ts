@@ -15,7 +15,16 @@ type SearchCommandOptions = {
   resolveUsers?: boolean;
   refreshUsers?: boolean;
   requireCompleteResults?: boolean;
+  metadataOnly?: boolean;
 };
+
+function pruneSearchPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const pruned = pruneEmpty(payload) as Record<string, unknown>;
+  if (payload.metadata_only === true && Array.isArray(payload.messages)) {
+    pruned.messages = payload.messages;
+  }
+  return pruned;
+}
 
 function addSearchOptions(cmd: Command): Command {
   return cmd
@@ -66,6 +75,7 @@ async function runSearch(input: {
       const limit = Number.parseInt(input.options.limit || "20", 10);
       const maxContentChars = Number.parseInt(input.options.maxContentChars || "4000", 10);
       const contentType = input.ctx.parseContentType(input.options.contentType);
+      const metadataOnly = Boolean(input.options.metadataOnly);
       return await searchSlack({
         client,
         auth,
@@ -80,16 +90,17 @@ async function runSearch(input: {
           content_type: contentType,
           limit,
           max_content_chars: maxContentChars,
-          download: true,
+          download: !metadataOnly,
           resolve_users: Boolean(input.options.resolveUsers || input.options.refreshUsers),
           refresh_users: Boolean(input.options.refreshUsers),
-          require_complete_results: Boolean(input.options.requireCompleteResults),
+          require_complete_results: Boolean(input.options.requireCompleteResults || metadataOnly),
+          metadata_only: metadataOnly,
         },
       });
     },
   });
 
-  console.log(JSON.stringify(pruneEmpty(payload), null, 2));
+  console.log(JSON.stringify(pruneSearchPayload(payload), null, 2));
 }
 
 export function registerSearchCommand(input: { program: Command; ctx: CliContext }): void {
@@ -107,6 +118,10 @@ export function registerSearchCommand(input: { program: Command; ctx: CliContext
       command.option(
         "--require-complete-results",
         "Fail instead of skipping any malformed, unresolvable, or unfetchable message result",
+      );
+      command.option(
+        "--metadata-only",
+        "Return verified channel_id, ts, and permalink refs only; implies strict complete results and no downloads",
       );
     }
     return command.argument("<query>", "Search query").action(async (...args) => {

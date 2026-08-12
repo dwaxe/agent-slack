@@ -39,6 +39,7 @@ export function toCompactMessage(
     maxBodyChars?: number;
     includeReactions?: boolean;
     includeMentionMetadata?: boolean;
+    includeContent?: boolean;
     downloadedPaths?: Record<string, DownloadResult>;
   },
 ): CompactSlackMessage {
@@ -48,9 +49,9 @@ export function toCompactMessage(
     ? collectDirectMessageMentions(msg)
     : undefined;
 
-  const rendered = renderSlackMessageContent(msg);
+  const rendered = input?.includeContent === false ? undefined : renderSlackMessageContent(msg);
   const content =
-    maxBodyChars >= 0 && rendered.length > maxBodyChars
+    rendered !== undefined && maxBodyChars >= 0 && rendered.length > maxBodyChars
       ? `${rendered.slice(0, maxBodyChars)}\n…`
       : rendered;
 

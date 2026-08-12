@@ -1,8 +1,31 @@
 import { describe, expect, test } from "bun:test";
 import { messageSummaryFromApiMessage } from "../src/slack/search-messages.ts";
 import { fetchChannelHistory, fetchMessage, fetchThread } from "../src/slack/messages.ts";
+import { toSlackMessageSummary } from "../src/slack/message-api-parsing.ts";
 
 describe("Slack message mrkdwn conversion", () => {
+  test("can bypass Markdown rendering while preserving raw mention surfaces", () => {
+    const blocks = [{ type: "rich_text", elements: [] }];
+    const attachments = [{ text: "attachment" }];
+    const message = toSlackMessageSummary({
+      channelId: "C12345678",
+      message: {
+        ts: "1.000001",
+        text: "<https://example.com|rendered label>",
+        blocks,
+        attachments,
+      },
+      renderMarkdown: false,
+    });
+
+    expect(message.markdown).toBe("");
+    expect(message).toMatchObject({
+      text: "<https://example.com|rendered label>",
+      blocks,
+      attachments,
+    });
+  });
+
   test("fetchMessage preserves mrkdwn false from conversations.history", async () => {
     const client = {
       api: async () => ({
