@@ -3,7 +3,7 @@ import { asArray, isRecord } from "../lib/object-type-guards.ts";
 
 export async function searchMessagesRaw(
   client: SlackApiClient,
-  input: { query: string; limit: number },
+  input: { query: string; limit: number; requireCompleteResults?: boolean },
 ): Promise<Record<string, unknown>[]> {
   const pageSize = Math.min(Math.max(input.limit, 1), 100);
   const out: Record<string, unknown>[] = [];
@@ -20,7 +20,14 @@ export async function searchMessagesRaw(
       sort_dir: "desc",
     });
     const messages = isRecord(resp) ? resp.messages : null;
-    const matches = isRecord(messages) ? asArray(messages.matches).filter(isRecord) : [];
+    if (input.requireCompleteResults && (!isRecord(messages) || !Array.isArray(messages.matches))) {
+      throw new Error("Slack search omitted its message matches; refusing partial output");
+    }
+    const rawMatches = isRecord(messages) ? asArray(messages.matches) : [];
+    if (input.requireCompleteResults && rawMatches.some((match) => !isRecord(match))) {
+      throw new Error("Slack search returned a malformed message result; refusing partial output");
+    }
+    const matches = rawMatches.filter(isRecord);
     out.push(...matches);
 
     const paging = isRecord(messages) ? (messages.paging ?? messages.pagination) : null;

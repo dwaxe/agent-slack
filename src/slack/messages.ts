@@ -1,8 +1,7 @@
 import type { SlackMessageRef } from "./url.ts";
 import type { SlackApiClient } from "./client.ts";
-import { slackMrkdwnToMarkdown } from "./mrkdwn.ts";
-import { asArray, getNumber, getString, isRecord } from "../lib/object-type-guards.ts";
-import { enrichFiles, toSlackFileSummary } from "./message-api-parsing.ts";
+import { asArray, getString, isRecord } from "../lib/object-type-guards.ts";
+import { enrichFiles, toSlackFileSummary, toSlackMessageSummary } from "./message-api-parsing.ts";
 
 export type SlackFileSummary = {
   id: string;
@@ -30,8 +29,9 @@ export type SlackMessageSummary = {
   bot_id?: string;
   text: string;
   markdown: string;
-  blocks?: unknown[];
-  attachments?: unknown[];
+  mrkdwn?: unknown;
+  blocks?: unknown;
+  attachments?: unknown;
   files?: SlackFileSummary[];
   reactions?: unknown[];
 };
@@ -91,25 +91,12 @@ export async function fetchMessage(
     .filter((f): f is SlackFileSummary => f !== null);
   const enrichedFiles = files.length > 0 ? await enrichFiles(client, files) : undefined;
 
-  const text = getString(msg.text) ?? "";
-  const ts = getString(msg.ts) ?? input.ref.message_ts;
-  const blocks = Array.isArray(msg.blocks) ? (msg.blocks as unknown[]) : undefined;
-  const attachments = Array.isArray(msg.attachments) ? (msg.attachments as unknown[]) : undefined;
-  const reactions = Array.isArray(msg.reactions) ? (msg.reactions as unknown[]) : undefined;
-  return {
-    channel_id: input.ref.channel_id,
-    ts,
-    thread_ts: getString(msg.thread_ts),
-    reply_count: getNumber(msg.reply_count),
-    user: getString(msg.user),
-    bot_id: getString(msg.bot_id),
-    text,
-    markdown: slackMrkdwnToMarkdown(text),
-    blocks,
-    attachments,
+  return toSlackMessageSummary({
+    channelId: input.ref.channel_id,
+    message: msg,
+    fallbackTs: input.ref.message_ts,
     files: enrichedFiles,
-    reactions,
-  };
+  });
 }
 
 async function findMessageInThread(
@@ -198,21 +185,13 @@ export async function fetchChannelHistory(
         .filter((f): f is SlackFileSummary => f !== null);
       const enrichedFiles = files.length > 0 ? await enrichFiles(client, files) : undefined;
 
-      const text = getString(m.text) ?? "";
-      out.push({
-        channel_id: input.channelId,
-        ts: getString(m.ts) ?? "",
-        thread_ts: getString(m.thread_ts),
-        reply_count: getNumber(m.reply_count),
-        user: getString(m.user),
-        bot_id: getString(m.bot_id),
-        text,
-        markdown: slackMrkdwnToMarkdown(text),
-        blocks: Array.isArray(m.blocks) ? (m.blocks as unknown[]) : undefined,
-        attachments: Array.isArray(m.attachments) ? (m.attachments as unknown[]) : undefined,
-        files: enrichedFiles,
-        reactions: Array.isArray(m.reactions) ? (m.reactions as unknown[]) : undefined,
-      });
+      out.push(
+        toSlackMessageSummary({
+          channelId: input.channelId,
+          message: m,
+          files: enrichedFiles,
+        }),
+      );
       if (out.length >= limit) {
         break;
       }
@@ -289,21 +268,13 @@ export async function fetchThread(
         .filter((f): f is SlackFileSummary => f !== null);
       const enrichedFiles = files.length > 0 ? await enrichFiles(client, files) : undefined;
 
-      const text = getString(m.text) ?? "";
-      out.push({
-        channel_id: input.channelId,
-        ts: getString(m.ts) ?? "",
-        thread_ts: getString(m.thread_ts),
-        reply_count: getNumber(m.reply_count),
-        user: getString(m.user),
-        bot_id: getString(m.bot_id),
-        text,
-        markdown: slackMrkdwnToMarkdown(text),
-        blocks: Array.isArray(m.blocks) ? (m.blocks as unknown[]) : undefined,
-        attachments: Array.isArray(m.attachments) ? (m.attachments as unknown[]) : undefined,
-        files: enrichedFiles,
-        reactions: Array.isArray(m.reactions) ? (m.reactions as unknown[]) : undefined,
-      });
+      out.push(
+        toSlackMessageSummary({
+          channelId: input.channelId,
+          message: m,
+          files: enrichedFiles,
+        }),
+      );
     }
     const meta = isRecord(resp.response_metadata) ? resp.response_metadata : null;
     const next = meta ? getString(meta.next_cursor) : undefined;

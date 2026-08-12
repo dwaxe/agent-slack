@@ -1,210 +1,282 @@
 import { isRecord } from "../lib/object-type-guards.ts";
-import { isUserId } from "./user-id.ts";
-
-const USER_ID_PATTERN = /^[UW][A-Z0-9]{8,19}$/;
-const USERGROUP_ID_PATTERN = /^S[A-Z0-9]{8,19}$/;
-const USER_MENTION_PATTERN = /^<@([UW][A-Z0-9]{8,19})(?![A-Z0-9])(?:\|[^<>\r\n]{1,256})?>/;
-const USERGROUP_MENTION_PATTERN =
-  /^<!subteam\^(S[A-Z0-9]{8,19})(?![A-Z0-9])(?:\|[^<>\r\n]{1,256})?>/;
-const BLOCKQUOTE_LINE_PATTERN = /^[\t ]*>/;
-const MULTILINE_BLOCKQUOTE_LINE_PATTERN = /^[\t ]*>>>/;
-
-type MentionAccumulator = {
-  userIds: Set<string>;
-  usergroupIds: Set<string>;
-};
-
-type MrkdwnScanState = {
-  accumulator: MentionAccumulator;
-  inFence: boolean;
-  inMultilineQuote: boolean;
-};
+import {
+  collectMrkdwnMentions,
+  collectRichTextBlock,
+  collectTextObjectMentions,
+  markMentionScanIncomplete,
+  type MentionScanState,
+} from "./message-mention-scanner.ts";
+import { collectAttachmentMentions } from "./message-mention-attachments.ts";
+import { collectTableBlock, collectTaskCardBlock } from "./message-mention-block-extras.ts";
+const PLAIN_TOP_LEVEL_BLOCKS = new Set(["divider", "file"]);
 
 export type MentionEvidence = {
-  schema: 1;
+  schema: 2;
+  complete: boolean;
   user_ids: string[];
   usergroup_ids: string[];
 };
 
-function getString(value: unknown): string {
-  return typeof value === "string" ? value : "";
+function hasOnlyKnownKeys(value: Record<string, unknown>, keys: ReadonlySet<string>): boolean {
+  return Object.keys(value).every((key) => keys.has(key));
 }
 
-function isUsergroupId(value: string): boolean {
-  return USERGROUP_ID_PATTERN.test(value);
-}
-
-function isMentionUserId(value: string): boolean {
-  return USER_ID_PATTERN.test(value) && isUserId(value);
-}
-
-function isEscaped(text: string, index: number): boolean {
-  let backslashCount = 0;
-  for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor--) {
-    backslashCount++;
+function validateOptionalString(value: unknown, state: MentionScanState): void {
+  if (value !== undefined && typeof value !== "string") {
+    markMentionScanIncomplete(state);
   }
-  return backslashCount % 2 === 1;
 }
 
-function collectMrkdwnLine(line: string, state: MrkdwnScanState): void {
-  if (!state.inFence && MULTILINE_BLOCKQUOTE_LINE_PATTERN.test(line)) {
-    state.inMultilineQuote = true;
+function validateOptionalBoolean(value: unknown, state: MentionScanState): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    markMentionScanIncomplete(state);
   }
-  if (!state.inFence && (state.inMultilineQuote || BLOCKQUOTE_LINE_PATTERN.test(line))) {
+}
+
+function validatePlainTextObject(value: unknown, state: MentionScanState): void {
+  if (!isRecord(value) || value.type !== "plain_text" || typeof value.text !== "string") {
+    markMentionScanIncomplete(state);
     return;
   }
+  if (!hasOnlyKnownKeys(value, new Set(["type", "text", "emoji"]))) {
+    markMentionScanIncomplete(state);
+  }
+  validateOptionalBoolean(value.emoji, state);
+}
 
-  let inInlineCode = false;
-  for (let index = 0; index < line.length; ) {
-    if (line.startsWith("```", index) && !isEscaped(line, index) && !inInlineCode) {
-      state.inFence = !state.inFence;
-      index += 3;
-      continue;
-    }
-    if (state.inFence) {
-      index++;
-      continue;
-    }
-    if (line[index] === "`" && !isEscaped(line, index)) {
-      inInlineCode = !inInlineCode;
-      index++;
-      continue;
-    }
-    if (inInlineCode || line[index] !== "<" || isEscaped(line, index)) {
-      index++;
-      continue;
-    }
-
-    const remainder = line.slice(index);
-    const userMatch = USER_MENTION_PATTERN.exec(remainder);
-    const userId = userMatch?.[1];
-    if (userMatch && userId && isMentionUserId(userId)) {
-      state.accumulator.userIds.add(userId);
-      index += userMatch[0].length;
-      continue;
-    }
-    const usergroupMatch = USERGROUP_MENTION_PATTERN.exec(remainder);
-    const usergroupId = usergroupMatch?.[1];
-    if (usergroupMatch && usergroupId && isUsergroupId(usergroupId)) {
-      state.accumulator.usergroupIds.add(usergroupId);
-      index += usergroupMatch[0].length;
-      continue;
-    }
-    index++;
+function collectOptionalTextObject(value: unknown, state: MentionScanState): void {
+  if (value !== undefined) {
+    collectTextObjectMentions(value, state);
   }
 }
 
-function collectMrkdwn(text: string, accumulator: MentionAccumulator): void {
-  const state: MrkdwnScanState = {
-    accumulator,
-    inFence: false,
-    inMultilineQuote: false,
-  };
-  for (const line of text.split(/\r?\n/)) {
-    collectMrkdwnLine(line, state);
+function collectSectionBlock(block: Record<string, unknown>, state: MentionScanState): void {
+  if (
+    !hasOnlyKnownKeys(block, new Set(["type", "block_id", "text", "fields", "accessory", "expand"]))
+  ) {
+    markMentionScanIncomplete(state);
   }
-}
-
-function collectSemanticRichTextElement(value: unknown, accumulator: MentionAccumulator): void {
-  if (!isRecord(value)) {
-    return;
+  validateOptionalString(block.block_id, state);
+  validateOptionalBoolean(block.expand, state);
+  if (block.accessory !== undefined) {
+    markMentionScanIncomplete(state);
   }
-  const type = getString(value.type);
-  if (type === "user") {
-    const userId = getString(value.user_id);
-    if (isMentionUserId(userId)) {
-      accumulator.userIds.add(userId);
+  collectOptionalTextObject(block.text, state);
+  if (block.fields === undefined) {
+    if (block.text === undefined) {
+      markMentionScanIncomplete(state);
     }
     return;
   }
-  if (type === "usergroup") {
-    const usergroupId = getString(value.usergroup_id);
-    if (isUsergroupId(usergroupId)) {
-      accumulator.usergroupIds.add(usergroupId);
-    }
+  if (!Array.isArray(block.fields)) {
+    markMentionScanIncomplete(state);
     return;
   }
-  if (type !== "rich_text_section" && type !== "rich_text_list") {
-    return;
-  }
-  const elements = Array.isArray(value.elements) ? value.elements : [];
-  for (const element of elements) {
-    collectSemanticRichTextElement(element, accumulator);
+  for (const field of block.fields) {
+    collectTextObjectMentions(field, state);
   }
 }
 
-function collectRichTextBlock(
-  value: Record<string, unknown>,
-  accumulator: MentionAccumulator,
+function validateImageElement(
+  value: unknown,
+  input: { state: MentionScanState; topLevel: boolean },
 ): void {
-  const elements = Array.isArray(value.elements) ? value.elements : [];
-  for (const element of elements) {
-    if (!isRecord(element)) {
-      continue;
-    }
-    const type = getString(element.type);
-    if (type === "rich_text_section" || type === "rich_text_list") {
-      collectSemanticRichTextElement(element, accumulator);
-    }
-  }
-}
-
-function collectMrkdwnObject(value: unknown, accumulator: MentionAccumulator): void {
-  if (!isRecord(value) || value.type !== "mrkdwn") {
+  const { state, topLevel } = input;
+  if (!isRecord(value) || value.type !== "image") {
+    markMentionScanIncomplete(state);
     return;
   }
-  const text = getString(value.text);
-  if (text) {
-    collectMrkdwn(text, accumulator);
+  if (
+    !hasOnlyKnownKeys(
+      value,
+      new Set([
+        "type",
+        "image_url",
+        "slack_file",
+        "alt_text",
+        ...(topLevel ? ["block_id", "title"] : []),
+      ]),
+    )
+  ) {
+    markMentionScanIncomplete(state);
+  }
+  if (typeof value.alt_text !== "string") {
+    markMentionScanIncomplete(state);
+  }
+  validateOptionalString(value.image_url, state);
+  if (value.slack_file !== undefined) {
+    if (!isRecord(value.slack_file)) {
+      markMentionScanIncomplete(state);
+    } else {
+      if (!hasOnlyKnownKeys(value.slack_file, new Set(["id", "url"]))) {
+        markMentionScanIncomplete(state);
+      }
+      validateOptionalString(value.slack_file.id, state);
+      validateOptionalString(value.slack_file.url, state);
+      if (value.slack_file.id === undefined && value.slack_file.url === undefined) {
+        markMentionScanIncomplete(state);
+      }
+    }
+  }
+  if (value.image_url === undefined && value.slack_file === undefined) {
+    markMentionScanIncomplete(state);
   }
 }
 
-function collectTopLevelBlocks(blocks: unknown, accumulator: MentionAccumulator): void {
+function collectContextBlock(block: Record<string, unknown>, state: MentionScanState): void {
+  if (!hasOnlyKnownKeys(block, new Set(["type", "block_id", "elements"]))) {
+    markMentionScanIncomplete(state);
+  }
+  validateOptionalString(block.block_id, state);
+  if (!Array.isArray(block.elements)) {
+    markMentionScanIncomplete(state);
+    return;
+  }
+  for (const element of block.elements) {
+    if (!isRecord(element) || typeof element.type !== "string") {
+      markMentionScanIncomplete(state);
+    } else if (element.type === "mrkdwn" || element.type === "plain_text") {
+      collectTextObjectMentions(element, state);
+    } else if (element.type === "image") {
+      validateImageElement(element, { state, topLevel: false });
+    } else {
+      markMentionScanIncomplete(state);
+    }
+  }
+}
+
+function collectPlainBlock(block: Record<string, unknown>, state: MentionScanState): void {
+  if (block.type === "header") {
+    if (!hasOnlyKnownKeys(block, new Set(["type", "block_id", "text"]))) {
+      markMentionScanIncomplete(state);
+    }
+    validateOptionalString(block.block_id, state);
+    validatePlainTextObject(block.text, state);
+  } else if (block.type === "image") {
+    if (
+      !hasOnlyKnownKeys(
+        block,
+        new Set(["type", "block_id", "image_url", "slack_file", "alt_text", "title"]),
+      )
+    ) {
+      markMentionScanIncomplete(state);
+    }
+    validateOptionalString(block.block_id, state);
+    validateOptionalString(block.alt_text, state);
+    if (block.title !== undefined) {
+      validatePlainTextObject(block.title, state);
+    }
+    validateImageElement(block, { state, topLevel: true });
+  } else if (block.type === "video") {
+    if (
+      !hasOnlyKnownKeys(
+        block,
+        new Set([
+          "type",
+          "block_id",
+          "video_url",
+          "thumbnail_url",
+          "alt_text",
+          "title",
+          "title_url",
+          "author_name",
+          "provider_name",
+          "provider_icon_url",
+          "description",
+        ]),
+      )
+    ) {
+      markMentionScanIncomplete(state);
+    }
+    validateOptionalString(block.block_id, state);
+    for (const key of ["video_url", "thumbnail_url", "alt_text"]) {
+      if (typeof block[key] !== "string") {
+        markMentionScanIncomplete(state);
+      }
+    }
+    for (const key of ["title_url", "author_name", "provider_name", "provider_icon_url"]) {
+      validateOptionalString(block[key], state);
+    }
+    validatePlainTextObject(block.title, state);
+    if (block.description !== undefined) {
+      validatePlainTextObject(block.description, state);
+    }
+  } else if (block.type === "divider") {
+    if (!hasOnlyKnownKeys(block, new Set(["type", "block_id"]))) {
+      markMentionScanIncomplete(state);
+    }
+    validateOptionalString(block.block_id, state);
+  } else if (block.type === "file") {
+    if (!hasOnlyKnownKeys(block, new Set(["type", "block_id", "source", "external_id"]))) {
+      markMentionScanIncomplete(state);
+    }
+    validateOptionalString(block.block_id, state);
+    if (typeof block.source !== "string" || typeof block.external_id !== "string") {
+      markMentionScanIncomplete(state);
+    }
+  }
+}
+
+function collectTopLevelBlocks(blocks: unknown, state: MentionScanState): void {
+  if (blocks === undefined) {
+    return;
+  }
   if (!Array.isArray(blocks)) {
+    markMentionScanIncomplete(state);
     return;
   }
   for (const block of blocks) {
-    if (!isRecord(block)) {
+    if (!isRecord(block) || typeof block.type !== "string") {
+      markMentionScanIncomplete(state);
       continue;
     }
-    const type = getString(block.type);
-    if (type === "rich_text") {
-      collectRichTextBlock(block, accumulator);
-      continue;
-    }
-    if (type === "section") {
-      collectMrkdwnObject(block.text, accumulator);
-      const fields = Array.isArray(block.fields) ? block.fields : [];
-      for (const field of fields) {
-        collectMrkdwnObject(field, accumulator);
-      }
-      continue;
-    }
-    if (type === "context") {
-      const elements = Array.isArray(block.elements) ? block.elements : [];
-      for (const element of elements) {
-        collectMrkdwnObject(element, accumulator);
-      }
+    if (block.type === "rich_text") {
+      collectRichTextBlock(block, state);
+    } else if (block.type === "section") {
+      collectSectionBlock(block, state);
+    } else if (block.type === "context") {
+      collectContextBlock(block, state);
+    } else if (block.type === "table" || block.type === "data_table") {
+      collectTableBlock(block, state);
+    } else if (block.type === "task_card") {
+      collectTaskCardBlock(block, state);
+    } else if (
+      block.type === "header" ||
+      block.type === "image" ||
+      block.type === "video" ||
+      PLAIN_TOP_LEVEL_BLOCKS.has(block.type)
+    ) {
+      collectPlainBlock(block, state);
+    } else {
+      markMentionScanIncomplete(state);
     }
   }
 }
 
 export function collectDirectMessageMentions(input: {
   text?: string;
-  blocks?: unknown[];
+  mrkdwn?: unknown;
+  blocks?: unknown;
+  attachments?: unknown;
 }): MentionEvidence {
-  const accumulator: MentionAccumulator = {
+  const state: MentionScanState = {
+    complete: true,
     userIds: new Set<string>(),
     usergroupIds: new Set<string>(),
   };
-  if (typeof input.text === "string") {
-    collectMrkdwn(input.text, accumulator);
+  if (input.mrkdwn !== undefined && input.mrkdwn !== true && input.mrkdwn !== false) {
+    markMentionScanIncomplete(state);
   }
-  collectTopLevelBlocks(input.blocks, accumulator);
+  if (input.mrkdwn !== false && typeof input.text === "string") {
+    collectMrkdwnMentions(input.text, state);
+  }
+  collectTopLevelBlocks(input.blocks, state);
+  collectAttachmentMentions(input.attachments, state);
 
   return {
-    schema: 1,
-    user_ids: Array.from(accumulator.userIds).sort(),
-    usergroup_ids: Array.from(accumulator.usergroupIds).sort(),
+    schema: 2,
+    complete: state.complete,
+    user_ids: Array.from(state.userIds).sort(),
+    usergroup_ids: Array.from(state.usergroupIds).sort(),
   };
 }

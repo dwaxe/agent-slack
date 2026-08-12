@@ -107,7 +107,7 @@ export function compactReactions(
   return out.length ? out : undefined;
 }
 
-export function extractForwardedThreads(attachments: unknown[] | undefined):
+export function extractForwardedThreads(attachments: unknown):
   | {
       url: string;
       thread_ts: string;

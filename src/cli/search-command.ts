@@ -14,6 +14,7 @@ type SearchCommandOptions = {
   maxContentChars?: string;
   resolveUsers?: boolean;
   refreshUsers?: boolean;
+  requireCompleteResults?: boolean;
 };
 
 function addSearchOptions(cmd: Command): Command {
@@ -82,6 +83,7 @@ async function runSearch(input: {
           download: true,
           resolve_users: Boolean(input.options.resolveUsers || input.options.refreshUsers),
           refresh_users: Boolean(input.options.refreshUsers),
+          require_complete_results: Boolean(input.options.requireCompleteResults),
         },
       });
     },
@@ -99,18 +101,24 @@ export function registerSearchCommand(input: { program: Command; ctx: CliContext
     kind: "messages" | "files" | "all";
     name: string;
     desc: string;
-  }): Command =>
-    addSearchOptions(searchCmd.command(spec.name).description(spec.desc))
-      .argument("<query>", "Search query")
-      .action(async (...args) => {
-        const [query, options] = args as [string, SearchCommandOptions];
-        try {
-          await runSearch({ ctx: input.ctx, kind: spec.kind, query, options });
-        } catch (err: unknown) {
-          console.error(input.ctx.errorMessage(err));
-          process.exitCode = 1;
-        }
-      });
+  }): Command => {
+    const command = addSearchOptions(searchCmd.command(spec.name).description(spec.desc));
+    if (spec.kind === "messages") {
+      command.option(
+        "--require-complete-results",
+        "Fail instead of skipping any malformed, unresolvable, or unfetchable message result",
+      );
+    }
+    return command.argument("<query>", "Search query").action(async (...args) => {
+      const [query, options] = args as [string, SearchCommandOptions];
+      try {
+        await runSearch({ ctx: input.ctx, kind: spec.kind, query, options });
+      } catch (err: unknown) {
+        console.error(input.ctx.errorMessage(err));
+        process.exitCode = 1;
+      }
+    });
+  };
 
   create({ kind: "all", name: "all", desc: "Search messages and files" });
   create({ kind: "messages", name: "messages", desc: "Search messages" });

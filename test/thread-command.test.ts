@@ -12,12 +12,14 @@ type ApiCall = {
 const workspaceUrl = "https://workspace.slack.com";
 const enterpriseUrl = "https://grid.enterprise.slack.com";
 const threadTs = "1700000000.000001";
+const expectedUserId = "U12345678";
 
 function createContext(input?: {
   authType?: "browser" | "standard";
   enterprise?: boolean;
   mismatchedEnterprise?: boolean;
   mismatchedEnterpriseUser?: boolean;
+  workspaceUserId?: string;
 }) {
   const calls: ApiCall[] = [];
   const workspaceCalls: (string | undefined)[] = [];
@@ -40,11 +42,17 @@ function createContext(input?: {
       }
       if (method === "auth.test") {
         return kind === "workspace"
-          ? { ok: true, team_id: "T12345678", user_id: "U12345678" }
+          ? {
+              ok: true,
+              team_id: "T12345678",
+              user_id: input?.workspaceUserId ?? expectedUserId,
+            }
           : {
               ok: true,
               team_id: input?.mismatchedEnterprise ? "E99999999" : "E12345678",
-              user_id: input?.mismatchedEnterpriseUser ? "U99999999" : "U12345678",
+              user_id: input?.mismatchedEnterpriseUser
+                ? "U99999999"
+                : (input?.workspaceUserId ?? expectedUserId),
             };
       }
       if (method === "subscriptions.thread.get") {
@@ -124,6 +132,7 @@ describe("unsubscribeThreadTarget", () => {
       unsubscribeThreadTarget({
         ctx,
         targetInput: `${workspaceUrl}/archives/C12345678/p1700000000000001`,
+        expectedUserId,
       }),
     ).resolves.toEqual({
       ok: true,
@@ -131,11 +140,13 @@ describe("unsubscribeThreadTarget", () => {
       channel_id: "C12345678",
       thread_ts: threadTs,
       subscribed: false,
+      user_id: expectedUserId,
       workspace_url: workspaceUrl,
       permalink: `${workspaceUrl}/archives/C12345678/p1700000000000001`,
     });
     expect(workspaceCalls).toEqual([workspaceUrl]);
     expect(calls.map((call) => call.method)).toEqual([
+      "auth.test",
       "team.info",
       "subscriptions.thread.get",
       "conversations.replies",
@@ -150,6 +161,7 @@ describe("unsubscribeThreadTarget", () => {
     const result = await unsubscribeThreadTarget({
       ctx,
       targetInput: `${workspaceUrl}/archives/C12345678/p1700000009000009?thread_ts=${threadTs}&cid=C12345678`,
+      expectedUserId,
     });
 
     expect(result.thread_ts).toBe(threadTs);
@@ -163,6 +175,7 @@ describe("unsubscribeThreadTarget", () => {
     await unsubscribeThreadTarget({
       ctx,
       targetInput: `${workspaceUrl}/archives/C12345678/p1700000000000001`,
+      expectedUserId,
     });
 
     expect(workspaceCalls).toEqual([workspaceUrl, enterpriseUrl]);
@@ -180,6 +193,7 @@ describe("unsubscribeThreadTarget", () => {
       unsubscribeThreadTarget({
         ctx,
         targetInput: `${workspaceUrl}/archives/C12345678/p1700000000000001`,
+        expectedUserId,
       }),
     ).rejects.toThrow("do not match the target workspace's organization");
     expect(calls.some((call) => call.method.startsWith("subscriptions."))).toBe(false);
@@ -195,6 +209,7 @@ describe("unsubscribeThreadTarget", () => {
       unsubscribeThreadTarget({
         ctx,
         targetInput: `${workspaceUrl}/archives/C12345678/p1700000000000001`,
+        expectedUserId,
       }),
     ).rejects.toThrow("do not belong to the same Slack user");
     expect(calls.some((call) => call.method.startsWith("subscriptions."))).toBe(false);
@@ -207,6 +222,7 @@ describe("unsubscribeThreadTarget", () => {
       unsubscribeThreadTarget({
         ctx,
         targetInput: "http://workspace.slack.com/archives/C12345678/p1700000000000001",
+        expectedUserId,
       }),
     ).rejects.toThrow("requires an https Slack message URL");
     expect(workspaceCalls).toHaveLength(0);
@@ -216,9 +232,9 @@ describe("unsubscribeThreadTarget", () => {
   test("rejects non-URL targets before resolving credentials", async () => {
     const { ctx, calls, workspaceCalls } = createContext();
 
-    await expect(unsubscribeThreadTarget({ ctx, targetInput: "#general" })).rejects.toThrow(
-      "Invalid URL",
-    );
+    await expect(
+      unsubscribeThreadTarget({ ctx, targetInput: "#general", expectedUserId }),
+    ).rejects.toThrow("Invalid URL");
     expect(workspaceCalls).toHaveLength(0);
     expect(calls).toHaveLength(0);
   });
@@ -230,9 +246,38 @@ describe("unsubscribeThreadTarget", () => {
       unsubscribeThreadTarget({
         ctx,
         targetInput: `${workspaceUrl}/archives/C12345678/p1700000000000001`,
+        expectedUserId,
       }),
     ).rejects.toThrow("requires browser auth");
     expect(calls).toHaveLength(0);
+  });
+
+  test("requires an exact canonical U or W expected actor ID", async () => {
+    const targetInput = `${workspaceUrl}/archives/C12345678/p1700000000000001`;
+
+    for (const invalidUserId of ["", "U1234", "B12345678", "u12345678", " U12345678"]) {
+      const { ctx, calls, workspaceCalls } = createContext();
+
+      await expect(
+        unsubscribeThreadTarget({
+          ctx,
+          targetInput,
+          expectedUserId: invalidUserId,
+        }),
+      ).rejects.toThrow("must be a canonical Slack user ID");
+      expect(workspaceCalls).toHaveLength(0);
+      expect(calls).toHaveLength(0);
+    }
+
+    const expectedWorkspaceUserId = "W12345678";
+    const { ctx } = createContext({ workspaceUserId: expectedWorkspaceUserId });
+    await expect(
+      unsubscribeThreadTarget({
+        ctx,
+        targetInput,
+        expectedUserId: expectedWorkspaceUserId,
+      }),
+    ).resolves.toMatchObject({ user_id: expectedWorkspaceUserId });
   });
 });
 
@@ -258,7 +303,13 @@ describe("thread unsubscribe command", () => {
     console.log = log as typeof console.log;
 
     await program.parseAsync(
-      ["thread", "unsubscribe", `${workspaceUrl}/archives/C12345678/p1700000000000001`],
+      [
+        "thread",
+        "unsubscribe",
+        "--expected-user-id",
+        expectedUserId,
+        `${workspaceUrl}/archives/C12345678/p1700000000000001`,
+      ],
       { from: "user" },
     );
 
@@ -269,6 +320,7 @@ describe("thread unsubscribe command", () => {
       ok: true,
       status: "unsubscribed",
       subscribed: false,
+      user_id: expectedUserId,
     });
   });
 
@@ -279,7 +331,10 @@ describe("thread unsubscribe command", () => {
     const error = mock((_message: string) => {});
     console.error = error as typeof console.error;
 
-    await program.parseAsync(["thread", "unsubscribe", "#general"], { from: "user" });
+    await program.parseAsync(
+      ["thread", "unsubscribe", "--expected-user-id", expectedUserId, "#general"],
+      { from: "user" },
+    );
 
     expect(process.exitCode).toBe(1);
     expect(String(error.mock.calls[0]?.[0])).toContain("Invalid URL");
