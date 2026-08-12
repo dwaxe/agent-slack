@@ -79,10 +79,30 @@ export async function searchMessagesViaSearchApi(
       }
       continue;
     }
+    const permalink = getString(m.permalink)?.trim();
+    if (input.requireCompleteResults) {
+      if (!permalink) {
+        throw new Error(
+          "Slack search returned a message without a permalink; refusing partial output",
+        );
+      }
+      let parsed;
+      try {
+        parsed = parseSlackMessageUrl(permalink);
+      } catch (err: unknown) {
+        throw new Error("Slack search returned an invalid message permalink", { cause: err });
+      }
+      if (parsed.channel_id !== channelId || parsed.message_ts !== ts) {
+        throw new Error("Slack search returned a permalink for a different message");
+      }
+      if (!input.workspace_url || parsed.workspace_url !== input.workspace_url) {
+        throw new Error("Slack search returned a permalink for a different workspace");
+      }
+    }
     messageRefs.push({
       channel_id: channelId,
       message_ts: ts,
-      permalink: getString(m.permalink),
+      permalink,
     });
     if (messageRefs.length >= input.limit) {
       break;
