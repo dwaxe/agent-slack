@@ -35,6 +35,7 @@ nix run github:stablyai/agent-slack
 - **Search**: messages + files (with filters)
 - **Artifacts**: auto-download snippets/images/files to local paths for agents
 - **Write**: send now or schedule delivery, edit/delete messages, add reactions (bullet lists auto-render as native Slack rich text)
+- **Thread subscriptions**: unsubscribe from one exact thread and verify the result
 - **Compose & drafts**: open a browser editor (`message compose`), or manage Slack-native drafts that show up in your Slack client (`message draft`)
 - **Channels**: list conversations, create channels, and invite users by id/handle/email
 - **Canvas**: create Slack canvases from Markdown and fetch them as Markdown
@@ -94,6 +95,8 @@ agent-slack
 │   └── react
 │       ├── add    <target> <emoji>
 │       └── remove <target> <emoji>
+├── thread
+│   └── unsubscribe <message-url>    # stop following one exact thread
 ├── channel
 │   ├── list                        # list conversations (user-scoped or all)
 │   ├── new                         # create channel
@@ -235,6 +238,20 @@ agent-slack message receipts list \
 `message export-own` verifies `team_id`, `user_id`, and the exact workspace origin with `auth.test`, filters exact timestamps locally, deduplicates by channel and timestamp, and returns messages chronologically. Each message includes Markdown `content`, a raw `content_sha256`, and `canonical_content_sha256`. The canonical hash is computed consistently for outbound and search-retrieved Slack text so URL autolinking, HTML entities, mention labels, and standard emoji rewrites do not change fallback identity. Its `complete` is `false` if the explicit 100-page search cap is reached; Slack search itself can still apply service-side sampling.
 
 Mutation receipts are kept locally under `$XDG_STATE_HOME/agent-slack/` (or `~/.local/state/agent-slack/`) with raw and canonical content hashes rather than plaintext. Every tracked text mutation verifies its authenticated workspace and reserves a write-ahead intent before the human-facing Slack write. `message receipts list` reports `tracking_started_at`, `unresolved_intent_count`, and `incomplete_reasons`; `complete` requires coverage of the requested window plus Slack's 120-day scheduling horizon, no unresolved in-window intent, and canonical hashes for every receipt that lacks an exact Slack `ts`. Consumers should prefer `(channel_id, ts)` and use `(channel_id, canonical_content_sha256)` only for timestamp-less fallback.
+
+### Unsubscribe from thread notifications
+
+Stop following one exact thread by passing its root or reply permalink:
+
+```bash
+agent-slack thread unsubscribe "https://workspace.slack.com/archives/C123/p1700000000000000"
+```
+
+This command requires browser-style auth (xoxc/xoxd). It reads the current subscription,
+uses Slack's undocumented `subscriptions.thread.remove` client endpoint, and reads the
+subscription state back to verify `subscribed: false`. Running it again returns
+`status: "already_unsubscribed"` without repeating the mutation. Only exact HTTPS Slack
+message URLs are accepted.
 
 ### Compose a message (browser editor)
 
