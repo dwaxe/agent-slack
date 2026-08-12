@@ -12,6 +12,7 @@ import { registerUserCommand } from "./cli/user-command.ts";
 import { registerUserGroupCommand } from "./cli/usergroup-command.ts";
 import { registerChannelCommand } from "./cli/channel-command.ts";
 import { registerWorkflowCommand } from "./cli/workflow-command.ts";
+import { registerThreadCommand } from "./cli/thread-command.ts";
 import { backgroundUpdateCheck } from "./lib/update.ts";
 import { commandTimeoutMs, shouldStartCommandWatchdog } from "./cli/command-watchdog.ts";
 
@@ -55,6 +56,7 @@ registerUserCommand({ program, ctx });
 registerUserGroupCommand({ program, ctx });
 registerChannelCommand({ program, ctx });
 registerWorkflowCommand({ program, ctx });
+registerThreadCommand({ program, ctx });
 
 program.parse(process.argv);
 if (!process.argv.slice(2).length) {

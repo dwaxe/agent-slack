@@ -13,6 +13,8 @@ Slack data commands print JSON to stdout. Help, update, and some authentication 
 
 Immediate non-attachment sends return `ts` and usually a `permalink`. Attachment sends return `ts` when Slack supplies share metadata; scheduled sends return `scheduled_message_id` and `post_at` instead.
 
+`thread unsubscribe` returns `status: "unsubscribed"` after a verified change or `status: "already_unsubscribed"` after an idempotent no-op, plus the canonical workspace, channel, thread timestamp, and root permalink. Both successful states report `subscribed: false`.
+
 `canvas create` returns `canvas: { id, title?, channel_id? }`. `canvas get` returns `canvas: { id, title?, markdown }`.
 `canvas edit` returns `ok: true` and `canvas: { id, operation }` after Slack accepts the change.
 

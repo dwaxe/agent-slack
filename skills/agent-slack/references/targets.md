@@ -12,6 +12,7 @@ A URL supplies the workspace, channel, and message timestamp. With a URL target:
 - `message list` returns the thread root and all replies.
 - `message send` replies in that message's thread. `message compose` and `message draft create` do the same unless `--thread-ts` explicitly overrides the URL-derived thread.
 - `channel mark` marks through that message timestamp; `--ts` explicitly overrides the timestamp. It rejects `--workspace` because the URL supplies it.
+- `thread unsubscribe` derives the thread root from the URL and accepts no non-URL target.
 
 Use a channel name or a `C...`, `G...`, or `D...` channel ID only when no URL is available:
 
