@@ -15,10 +15,10 @@ function rawMatches(count: number): Record<string, unknown>[] {
   }));
 }
 
-function searchApiInput(rawMatches: Record<string, unknown>[]) {
+function searchApiInput(rawMatches: Record<string, unknown>[], workspace_url = workspaceUrl) {
   return {
     auth,
-    workspace_url: workspaceUrl,
+    workspace_url,
     slack_query: "alias",
     limit: 20,
     maxContentChars: 4000,
@@ -182,6 +182,30 @@ describe("complete Slack message search results", () => {
         ]),
       ),
     ).rejects.toThrow("Could not fetch complete Slack search result C12345678:1.000001");
+  });
+
+  test("accepts a canonical permalink when the workspace selector has a trailing slash", async () => {
+    const client = {
+      api: async () => ({
+        messages: [{ ts: "1.000001", text: "result" }],
+      }),
+    } as unknown as SlackApiClient;
+
+    const result = await searchMessagesViaSearchApi(
+      client,
+      searchApiInput(
+        [
+          {
+            ts: "1.000001",
+            channel: { id: "C12345678" },
+            permalink: `${workspaceUrl}/archives/C12345678/p1000001`,
+          },
+        ],
+        `${workspaceUrl}/`,
+      ),
+    );
+
+    expect(result.messages).toHaveLength(1);
   });
 
   test("rejects missing, malformed, and mismatched permalinks", async () => {

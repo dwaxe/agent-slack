@@ -95,7 +95,18 @@ export async function searchMessagesViaSearchApi(
       if (parsed.channel_id !== channelId || parsed.message_ts !== ts) {
         throw new Error("Slack search returned a permalink for a different message");
       }
-      if (!input.workspace_url || parsed.workspace_url !== input.workspace_url) {
+      let expectedWorkspaceOrigin: string | undefined;
+      try {
+        expectedWorkspaceOrigin = input.workspace_url
+          ? new URL(input.workspace_url).origin
+          : undefined;
+      } catch {
+        // Fail through the same closed contract below.
+      }
+      if (
+        !expectedWorkspaceOrigin ||
+        new URL(parsed.workspace_url).origin !== expectedWorkspaceOrigin
+      ) {
         throw new Error("Slack search returned a permalink for a different workspace");
       }
     }
