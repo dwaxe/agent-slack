@@ -793,7 +793,7 @@ describe("message draft unknown subcommand", () => {
     expect(joined).toContain("message compose");
     expect(process.exitCode).toBe(1);
     // Don't leak a failing exit code into the test runner.
-    process.exitCode = prevExit;
+    process.exitCode = prevExit ?? 0;
   });
 });
 
