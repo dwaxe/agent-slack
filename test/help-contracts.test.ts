@@ -6,6 +6,7 @@ import type { CliContext } from "../src/cli/context.ts";
 import { registerLaterCommand } from "../src/cli/later-command.ts";
 import { registerMessageCommand } from "../src/cli/message-command.ts";
 import { registerUserCommand } from "../src/cli/user-command.ts";
+import { registerThreadCommand } from "../src/cli/thread-command.ts";
 
 function findCommand(root: Command, ...path: string[]): Command {
   let current = root;
@@ -35,6 +36,7 @@ function buildProgram(): Command {
   registerChannelCommand({ program, ctx });
   registerLaterCommand({ program, ctx });
   registerUserCommand({ program, ctx });
+  registerThreadCommand({ program, ctx });
   return program;
 }
 
@@ -99,5 +101,13 @@ describe("agent-facing help contracts", () => {
 
     expect(dmOpen.registeredArguments[0]?.description).toContain("One to 8 other user");
     expect(dmOpen.registeredArguments[0]?.description).toContain("caller is implicit");
+  });
+
+  test("thread unsubscribe documents its target, auth, and API constraints", () => {
+    const unsubscribe = findCommand(buildProgram(), "thread", "unsubscribe");
+
+    expect(unsubscribe.description()).toContain("requires browser auth");
+    expect(unsubscribe.description()).toContain("unsupported Slack API");
+    expect(unsubscribe.registeredArguments[0]?.description).toContain("Exact Slack message URL");
   });
 });
