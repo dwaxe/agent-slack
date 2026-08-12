@@ -8,17 +8,36 @@ import { getString, isRecord } from "../lib/object-type-guards.ts";
 import type { SlackApiClient, SlackAuth } from "../slack/client.ts";
 import { isUserId } from "../slack/user-id.ts";
 
+const TEAM_ID_PATTERN = /^T[A-Z0-9]{8,19}$/;
+
 type ThreadSubscriptionEndpoint = {
   client: SlackApiClient;
   auth: SlackAuth;
   teamId?: string;
 };
 
+function getHttpsOrigin(value: unknown): string | undefined {
+  const raw = getString(value);
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" || url.username || url.password) {
+      return undefined;
+    }
+    return url.origin;
+  } catch {
+    return undefined;
+  }
+}
+
 async function resolveThreadSubscriptionEndpoint(input: {
   ctx: CliContext;
   workspaceClient: SlackApiClient;
   workspaceAuth: SlackAuth;
   workspaceUserId: string;
+  workspaceTeamId: string;
 }): Promise<ThreadSubscriptionEndpoint> {
   if (input.workspaceAuth.auth_type !== "browser") {
     throw new Error("Thread unsubscribe requires browser auth (xoxc token and xoxd cookie).");
@@ -26,13 +45,15 @@ async function resolveThreadSubscriptionEndpoint(input: {
 
   const response = await input.workspaceClient.api("team.info", {});
   const team = isRecord(response.team) ? response.team : null;
-  const teamId = team ? getString(team.id)?.trim() : undefined;
+  const teamId = team ? getString(team.id) : undefined;
+  if (teamId !== input.workspaceTeamId) {
+    throw new Error(
+      "Slack team.info does not match the workspace verified by auth.test; refusing to unsubscribe.",
+    );
+  }
   const enterpriseId = team ? getString(team.enterprise_id)?.trim() : undefined;
   if (!enterpriseId) {
     return { client: input.workspaceClient, auth: input.workspaceAuth };
-  }
-  if (!teamId) {
-    throw new Error("Slack did not return the workspace team ID required for Enterprise Grid.");
   }
 
   const enterpriseDomain = team
@@ -99,6 +120,18 @@ export async function unsubscribeThreadTarget(input: {
           "Authenticated Slack user does not match --expected-user-id; refusing to unsubscribe.",
         );
       }
+      const targetOrigin = new URL(ref.workspace_url).origin;
+      if (getHttpsOrigin(identity.url) !== targetOrigin) {
+        throw new Error(
+          "Slack auth.test workspace origin does not match the target URL; refusing to unsubscribe.",
+        );
+      }
+      const workspaceTeamId = getString(identity.team_id);
+      if (!workspaceTeamId || !TEAM_ID_PATTERN.test(workspaceTeamId)) {
+        throw new Error(
+          "Slack auth.test did not return a canonical workspace team ID; refusing to unsubscribe.",
+        );
+      }
 
       const threadTs = ref.thread_ts_hint ?? ref.message_ts;
       const subscription = await resolveThreadSubscriptionEndpoint({
@@ -106,6 +139,7 @@ export async function unsubscribeThreadTarget(input: {
         workspaceClient: client,
         workspaceAuth: auth,
         workspaceUserId: userId,
+        workspaceTeamId,
       });
       const result = await unsubscribeThread({
         client,

@@ -97,7 +97,11 @@ export function registerMessageCommand(input: { program: Command; ctx: CliContex
     .option("--include-reactions", "Include reactions + reacting users")
     .option(
       "--include-mention-metadata",
-      "Include schema 2 direct-notification evidence (complete or incomplete) per message",
+      "Include schema 2 mention evidence; emit thread_complete only after strict thread pagination",
+    )
+    .option(
+      "--metadata-only",
+      "Return only ts, author, and schema 2 mention evidence; thread mode also proves thread_complete",
     )
     .option("--resolve-users", "Resolve user IDs to user profiles")
     .option(

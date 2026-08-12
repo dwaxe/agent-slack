@@ -4,6 +4,7 @@ import {
   fetchThread,
   fetchChannelHistory,
   toCompactMessage,
+  type CompactSlackMessage,
 } from "../slack/messages.ts";
 import { pruneEmpty } from "../lib/compact-json.ts";
 import { parseMsgTarget } from "./targets.ts";
@@ -23,6 +24,17 @@ import {
   toReferencedUsers,
 } from "../slack/user-cache.ts";
 import { isRecord } from "../lib/object-type-guards.ts";
+
+function toMetadataOnlyListMessage(message: CompactSlackMessage): Record<string, unknown> {
+  if (!message.author) {
+    throw new Error("Metadata-only message is missing its validated author identity");
+  }
+  return {
+    ts: message.ts,
+    author: message.author,
+    mention_evidence: message.mention_evidence,
+  };
+}
 
 function pruneMessageListPayload(
   payload: Record<string, unknown>,
@@ -164,6 +176,13 @@ export async function handleMessageList(input: {
     );
   }
   const workspaceUrl = input.ctx.effectiveWorkspaceUrl(input.options.workspace);
+  const metadataOnly = Boolean(input.options.metadataOnly);
+  if (metadataOnly && input.options.includeReactions) {
+    throw new Error("--metadata-only cannot be combined with --include-reactions");
+  }
+  if (metadataOnly && (input.options.resolveUsers || input.options.refreshUsers)) {
+    throw new Error("--metadata-only cannot be combined with user resolution options");
+  }
 
   return input.ctx.withAutoRefresh({
     workspaceUrl: target.kind === "url" ? target.ref.workspace_url : workspaceUrl,
@@ -182,19 +201,30 @@ export async function handleMessageList(input: {
         warnOnTruncatedSlackUrl(ref);
         const { client, auth } = await input.ctx.getClientForWorkspace(ref.workspace_url);
         const includeReactions = Boolean(input.options.includeReactions);
-        const includeMentionMetadata = Boolean(input.options.includeMentionMetadata);
-        const msg = await fetchMessage(client, { ref, includeReactions });
-        const rootTs = msg.thread_ts ?? msg.ts;
+        const includeMentionMetadata = Boolean(
+          input.options.includeMentionMetadata || metadataOnly,
+        );
+        const rootTs = metadataOnly
+          ? (ref.thread_ts_hint ?? ref.message_ts)
+          : await (async () => {
+              const msg = await fetchMessage(client, { ref, includeReactions });
+              return msg.thread_ts ?? msg.ts;
+            })();
         const threadMessages = await fetchThread(client, {
           channelId: ref.channel_id,
           threadTs: rootTs,
           includeReactions,
+          requireComplete: includeMentionMetadata,
+          includeFiles: !metadataOnly,
+          renderMarkdown: !metadataOnly,
         });
-        const downloadedPaths = await downloadMessageFiles({ auth, messages: threadMessages });
+        const downloadedPaths = metadataOnly
+          ? {}
+          : await downloadMessageFiles({ auth, messages: threadMessages });
         const maxBodyChars = Number.parseInt(input.options.maxBodyChars, 10);
-        const referencedUserIds = collectReferencedUserIds(threadMessages, {
-          includeReactions,
-        });
+        const referencedUserIds = metadataOnly
+          ? []
+          : collectReferencedUserIds(threadMessages, { includeReactions });
         const usersById =
           input.options.resolveUsers || input.options.refreshUsers
             ? await resolveUsersById({
@@ -204,20 +234,24 @@ export async function handleMessageList(input: {
                 forceRefresh: Boolean(input.options.refreshUsers),
               })
             : new Map();
-        const messages = threadMessages
-          .map((m) =>
-            toCompactMessage(m, {
-              maxBodyChars,
-              includeReactions,
-              includeMentionMetadata,
-              downloadedPaths,
-            }),
-          )
-          .map(toThreadListMessage);
+        const messages = threadMessages.map((m) => {
+          const compact = toCompactMessage(m, {
+            maxBodyChars,
+            includeReactions,
+            includeMentionMetadata,
+            includeContent: !metadataOnly,
+            downloadedPaths,
+          });
+          return metadataOnly ? toMetadataOnlyListMessage(compact) : toThreadListMessage(compact);
+        });
         return pruneMessageListPayload(
           {
             messages,
-            referenced_users: toReferencedUsers(referencedUserIds, usersById),
+            metadata_only: metadataOnly ? true : undefined,
+            thread_complete: includeMentionMetadata ? true : undefined,
+            referenced_users: metadataOnly
+              ? undefined
+              : toReferencedUsers(referencedUserIds, usersById),
           },
           includeMentionMetadata,
         );
@@ -238,7 +272,9 @@ export async function handleMessageList(input: {
       // No thread specifier → list recent channel messages
       if (!threadTs && !ts) {
         const includeReactions = Boolean(input.options.includeReactions);
-        const includeMentionMetadata = Boolean(input.options.includeMentionMetadata);
+        const includeMentionMetadata = Boolean(
+          input.options.includeMentionMetadata || metadataOnly,
+        );
         const limit = parseLimit(input.options.limit);
         const oldest = requireOldestWhenReactionFiltersUsed({
           oldest: input.options.oldest,
@@ -253,12 +289,16 @@ export async function handleMessageList(input: {
           includeReactions: includeReactions || hasReactionFilters,
           withReactions,
           withoutReactions,
+          includeFiles: !metadataOnly,
+          renderMarkdown: !metadataOnly,
         });
-        const downloadedPaths = await downloadMessageFiles({ auth, messages: channelMessages });
+        const downloadedPaths = metadataOnly
+          ? {}
+          : await downloadMessageFiles({ auth, messages: channelMessages });
         const maxBodyChars = Number.parseInt(input.options.maxBodyChars, 10);
-        const referencedUserIds = collectReferencedUserIds(channelMessages, {
-          includeReactions,
-        });
+        const referencedUserIds = metadataOnly
+          ? []
+          : collectReferencedUserIds(channelMessages, { includeReactions });
         const usersById =
           input.options.resolveUsers || input.options.refreshUsers
             ? await resolveUsersById({
@@ -268,19 +308,24 @@ export async function handleMessageList(input: {
                 forceRefresh: Boolean(input.options.refreshUsers),
               })
             : new Map();
-        const messages = channelMessages.map((m) =>
-          toCompactMessage(m, {
+        const messages = channelMessages.map((m) => {
+          const compact = toCompactMessage(m, {
             maxBodyChars,
             includeReactions,
             includeMentionMetadata,
+            includeContent: !metadataOnly,
             downloadedPaths,
-          }),
-        );
+          });
+          return metadataOnly ? toMetadataOnlyListMessage(compact) : compact;
+        });
         return pruneMessageListPayload(
           {
-            channel_id: channelId,
+            channel_id: metadataOnly ? undefined : channelId,
             messages,
-            referenced_users: toReferencedUsers(referencedUserIds, usersById),
+            metadata_only: metadataOnly ? true : undefined,
+            referenced_users: metadataOnly
+              ? undefined
+              : toReferencedUsers(referencedUserIds, usersById),
           },
           includeMentionMetadata,
         );
@@ -302,22 +347,32 @@ export async function handleMessageList(input: {
             raw: input.targetInput,
           };
           const includeReactions = Boolean(input.options.includeReactions);
-          const msg = await fetchMessage(client, { ref, includeReactions });
+          const msg = await fetchMessage(client, {
+            ref,
+            includeReactions,
+            includeFiles: !metadataOnly,
+            renderMarkdown: !metadataOnly,
+          });
           return msg.thread_ts ?? msg.ts;
         })());
 
       const includeReactions = Boolean(input.options.includeReactions);
-      const includeMentionMetadata = Boolean(input.options.includeMentionMetadata);
+      const includeMentionMetadata = Boolean(input.options.includeMentionMetadata || metadataOnly);
       const threadMessages = await fetchThread(client, {
         channelId,
         threadTs: rootTs,
         includeReactions,
+        requireComplete: includeMentionMetadata,
+        includeFiles: !metadataOnly,
+        renderMarkdown: !metadataOnly,
       });
-      const downloadedPaths = await downloadMessageFiles({ auth, messages: threadMessages });
+      const downloadedPaths = metadataOnly
+        ? {}
+        : await downloadMessageFiles({ auth, messages: threadMessages });
       const maxBodyChars = Number.parseInt(input.options.maxBodyChars, 10);
-      const referencedUserIds = collectReferencedUserIds(threadMessages, {
-        includeReactions,
-      });
+      const referencedUserIds = metadataOnly
+        ? []
+        : collectReferencedUserIds(threadMessages, { includeReactions });
       const usersById =
         input.options.resolveUsers || input.options.refreshUsers
           ? await resolveUsersById({
@@ -327,20 +382,24 @@ export async function handleMessageList(input: {
               forceRefresh: Boolean(input.options.refreshUsers),
             })
           : new Map();
-      const messages = threadMessages
-        .map((m) =>
-          toCompactMessage(m, {
-            maxBodyChars,
-            includeReactions,
-            includeMentionMetadata,
-            downloadedPaths,
-          }),
-        )
-        .map(toThreadListMessage);
+      const messages = threadMessages.map((m) => {
+        const compact = toCompactMessage(m, {
+          maxBodyChars,
+          includeReactions,
+          includeMentionMetadata,
+          includeContent: !metadataOnly,
+          downloadedPaths,
+        });
+        return metadataOnly ? toMetadataOnlyListMessage(compact) : toThreadListMessage(compact);
+      });
       return pruneMessageListPayload(
         {
           messages,
-          referenced_users: toReferencedUsers(referencedUserIds, usersById),
+          metadata_only: metadataOnly ? true : undefined,
+          thread_complete: includeMentionMetadata ? true : undefined,
+          referenced_users: metadataOnly
+            ? undefined
+            : toReferencedUsers(referencedUserIds, usersById),
         },
         includeMentionMetadata,
       );

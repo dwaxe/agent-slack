@@ -289,7 +289,11 @@ describe("compact message notification mentions", () => {
           return { messages: [root] };
         }
         if (method === "conversations.replies") {
-          return { messages: [reply, root] };
+          return {
+            messages: [reply, root],
+            has_more: false,
+            response_metadata: { next_cursor: "" },
+          };
         }
         throw new Error(`Unexpected Slack method: ${method}`);
       },
@@ -313,6 +317,7 @@ describe("compact message notification mentions", () => {
       },
     });
 
+    expect(payload.thread_complete).toBe(true);
     expect(payload.messages).toEqual([
       {
         ts: root.ts,
@@ -337,5 +342,48 @@ describe("compact message notification mentions", () => {
         },
       },
     ]);
+  });
+
+  test("message list fails closed when thread completeness cannot be proven", async () => {
+    const root = {
+      ts: "1700000000.000001",
+      text: "Root without a proven pagination boundary",
+      user: "U99999999",
+    };
+    const client = {
+      api: async (method: string) => {
+        if (method === "conversations.history") {
+          return { messages: [root] };
+        }
+        if (method === "conversations.replies") {
+          return {
+            messages: [root],
+            has_more: true,
+            response_metadata: { next_cursor: "" },
+          };
+        }
+        throw new Error(`Unexpected Slack method: ${method}`);
+      },
+    };
+    const ctx = {
+      effectiveWorkspaceUrl: () => undefined,
+      withAutoRefresh: async (input: { work: () => Promise<unknown> }) => await input.work(),
+      getClientForWorkspace: async () => ({
+        client,
+        auth: { auth_type: "standard", token: "test-token" },
+        workspace_url: "https://workspace.slack.com",
+      }),
+    } as unknown as CliContext;
+
+    await expect(
+      handleMessageList({
+        ctx,
+        targetInput: "https://workspace.slack.com/archives/C12345678/p1700000000000001",
+        options: {
+          maxBodyChars: "8000",
+          includeMentionMetadata: true,
+        },
+      }),
+    ).rejects.toThrow("inconsistent has_more and next_cursor");
   });
 });

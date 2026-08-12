@@ -2,6 +2,15 @@ import type { SlackMessageRef } from "./url.ts";
 import type { SlackApiClient } from "./client.ts";
 import { asArray, getString, isRecord } from "../lib/object-type-guards.ts";
 import { enrichFiles, toSlackFileSummary, toSlackMessageSummary } from "./message-api-parsing.ts";
+import {
+  assertCanonicalThreadTimestamp,
+  assertCompleteThreadReplyCount,
+  assertCompleteThreadRoot,
+  assertNewThreadCursor,
+  parseCompleteThreadPage,
+  readCompleteThreadRootReplyCount,
+  validateCompleteThreadMessage,
+} from "./thread-completeness.ts";
 
 export type SlackFileSummary = {
   id: string;
@@ -38,7 +47,12 @@ export type SlackMessageSummary = {
 
 export async function fetchMessage(
   client: SlackApiClient,
-  input: { ref: SlackMessageRef; includeReactions?: boolean },
+  input: {
+    ref: SlackMessageRef;
+    includeReactions?: boolean;
+    includeFiles?: boolean;
+    renderMarkdown?: boolean;
+  },
 ): Promise<SlackMessageSummary> {
   const history = await client.api("conversations.history", {
     channel: input.ref.channel_id,
@@ -86,16 +100,15 @@ export async function fetchMessage(
     throw new Error("Message not found (no access or wrong URL)");
   }
 
-  const files = asArray(msg.files)
-    .map((f) => toSlackFileSummary(f))
-    .filter((f): f is SlackFileSummary => f !== null);
-  const enrichedFiles = files.length > 0 ? await enrichFiles(client, files) : undefined;
+  const enrichedFiles =
+    input.includeFiles === false ? undefined : await parseAndEnrichFiles(client, msg.files);
 
   return toSlackMessageSummary({
     channelId: input.ref.channel_id,
     message: msg,
     fallbackTs: input.ref.message_ts,
     files: enrichedFiles,
+    renderMarkdown: input.renderMarkdown,
   });
 }
 
@@ -144,6 +157,8 @@ export async function fetchChannelHistory(
     includeReactions?: boolean;
     withReactions?: string[];
     withoutReactions?: string[];
+    includeFiles?: boolean;
+    renderMarkdown?: boolean;
   },
 ): Promise<SlackMessageSummary[]> {
   const raw = input.limit ?? 25;
@@ -180,16 +195,15 @@ export async function fetchChannelHistory(
       ) {
         continue;
       }
-      const files = asArray(m.files)
-        .map((f) => toSlackFileSummary(f))
-        .filter((f): f is SlackFileSummary => f !== null);
-      const enrichedFiles = files.length > 0 ? await enrichFiles(client, files) : undefined;
+      const enrichedFiles =
+        input.includeFiles === false ? undefined : await parseAndEnrichFiles(client, m.files);
 
       out.push(
         toSlackMessageSummary({
           channelId: input.channelId,
           message: m,
           files: enrichedFiles,
+          renderMarkdown: input.renderMarkdown,
         }),
       );
       if (out.length >= limit) {
@@ -245,10 +259,25 @@ export function passesReactionNameFilters(
 
 export async function fetchThread(
   client: SlackApiClient,
-  input: { channelId: string; threadTs: string; includeReactions?: boolean },
+  input: {
+    channelId: string;
+    threadTs: string;
+    includeReactions?: boolean;
+    requireComplete?: boolean;
+    includeFiles?: boolean;
+    renderMarkdown?: boolean;
+  },
 ): Promise<SlackMessageSummary[]> {
+  if (input.requireComplete) {
+    assertCanonicalThreadTimestamp(input.threadTs);
+  }
+
   const out: SlackMessageSummary[] = [];
   let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+  const seenTimestamps = new Set<string>();
+  let rootSeen = false;
+  let reportedReplyCount: number | undefined;
 
   for (;;) {
     const resp = await client.api("conversations.replies", {
@@ -258,35 +287,69 @@ export async function fetchThread(
       cursor,
       include_all_metadata: input.includeReactions ? true : undefined,
     });
-    const messages = asArray(resp.messages);
+    const page = input.requireComplete ? parseCompleteThreadPage(resp) : undefined;
+    const messages = page?.messages ?? asArray(resp.messages);
     for (const m of messages) {
       if (!isRecord(m)) {
         continue;
       }
-      const files = asArray(m.files)
-        .map((f) => toSlackFileSummary(f))
-        .filter((f): f is SlackFileSummary => f !== null);
-      const enrichedFiles = files.length > 0 ? await enrichFiles(client, files) : undefined;
+      if (input.requireComplete) {
+        const isRoot = validateCompleteThreadMessage({
+          message: m,
+          threadTs: input.threadTs,
+          seenTimestamps,
+        });
+        if (isRoot) {
+          rootSeen = true;
+          reportedReplyCount = readCompleteThreadRootReplyCount(m);
+        }
+      }
+      const enrichedFiles =
+        input.includeFiles === false ? undefined : await parseAndEnrichFiles(client, m.files);
 
       out.push(
         toSlackMessageSummary({
           channelId: input.channelId,
           message: m,
           files: enrichedFiles,
+          renderMarkdown: input.renderMarkdown,
         }),
       );
     }
     const meta = isRecord(resp.response_metadata) ? resp.response_metadata : null;
-    const next = meta ? getString(meta.next_cursor) : undefined;
+    const next = page?.nextCursor ?? (meta ? getString(meta.next_cursor) : undefined);
     if (!next) {
       break;
     }
+    if (input.requireComplete) {
+      assertNewThreadCursor(next, seenCursors);
+    } else {
+      seenCursors.add(next);
+    }
     cursor = next;
+  }
+
+  if (input.requireComplete) {
+    assertCompleteThreadRoot(rootSeen);
+    assertCompleteThreadReplyCount({
+      reported: reportedReplyCount,
+      actual: seenTimestamps.size - 1,
+    });
   }
 
   // Slack returns newest-first for some methods; normalize to chronological.
   out.sort((a, b) => Number.parseFloat(a.ts) - Number.parseFloat(b.ts));
   return out;
+}
+
+async function parseAndEnrichFiles(
+  client: SlackApiClient,
+  rawFiles: unknown,
+): Promise<SlackFileSummary[] | undefined> {
+  const files = asArray(rawFiles)
+    .map((file) => toSlackFileSummary(file))
+    .filter((file): file is SlackFileSummary => file !== null);
+  return files.length > 0 ? await enrichFiles(client, files) : undefined;
 }
 
 export { toCompactMessage, type CompactSlackMessage } from "./message-compact.ts";

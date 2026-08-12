@@ -18,7 +18,18 @@ direct mentions from mrkdwn-enabled top-level text, known semantic blocks, and e
 mrkdwn-enabled fields in normal legacy attachments. It excludes quoted, code, plain-text,
 forwarded, and unfurled lookalikes. Unknown or unsupported message surfaces set
 `complete: false`; mutation workflows must reject incomplete or unrecognized schemas.
-Without the flag, this field is omitted.
+Without the flag, this field is omitted. In thread mode, the command also emits exact
+top-level `thread_complete: true` only after validating all cursor pages, message
+timestamps, the requested root, and any reported root reply count; it fails without partial output if completeness cannot
+be proven. Thread-driven mutations must require that exact field plus complete schema 2
+evidence on every message. Channel-history mode never emits `thread_complete` because it
+returns a bounded window rather than a complete collection.
+
+`message list --metadata-only` emits exact top-level `metadata_only: true`, implies
+mention evidence, and returns only `ts`, validated `author`, and `mention_evidence` for
+each message. It scans raw mention-bearing surfaces before omitting content, skips file
+enrichment and downloads, and still emits `thread_complete: true` only for a proven full
+thread. It is incompatible with reaction inclusion and user-resolution options.
 
 `search messages --require-complete-results` produces no partial result when Slack
 returns a malformed or unresolvable match, lacks an exact matching permalink, or when a
@@ -27,9 +38,20 @@ It also requires coherent `page`, `pages`, and `total` pagination metadata and r
 short result pages before `min(total, limit)` matches are collected. The option applies
 only to global search and cannot be combined with `--channel`.
 
+`search messages --metadata-only` emits exact top-level `metadata_only: true` and returns
+only validated `channel_id`, `ts`, and `permalink` fields. It implies strict complete
+results and does not hydrate messages, render content, enrich files, or download files.
+It cannot be combined with channel fallback, content-type filtering, or user resolution.
+
 Immediate non-attachment sends return `ts` and usually a `permalink`. Attachment sends return `ts` when Slack supplies share metadata; scheduled sends return `scheduled_message_id` and `post_at` instead.
 
-`thread unsubscribe` returns `status: "unsubscribed"` after a verified change or `status: "already_unsubscribed"` after an idempotent no-op, plus the verified `user_id`, canonical workspace, channel, thread timestamp, and root permalink. Both successful states report `subscribed: false`.
+## Thread subscription mutations
+
+`thread unsubscribe` returns `status: "unsubscribed"` after a verified change or
+`status: "already_unsubscribed"` after an idempotent no-op, plus the verified `user_id`,
+canonical `workspace_url`, `channel_id`, `thread_ts`, and root `permalink`. Both successful
+states report exact `subscribed: false`; require these verified output fields before
+treating the mutation as successful.
 
 `canvas create` returns `canvas: { id, title?, channel_id? }`. `canvas get` returns `canvas: { id, title?, markdown }`.
 

@@ -209,8 +209,14 @@ agent-slack message list "#general" --limit 20
 # Include machine-readable direct notification mentions on every listed message
 agent-slack message list "#general" --limit 20 --include-mention-metadata
 
+# Return only message identity, author, and mention evidence (no content or files)
+agent-slack message list "https://workspace.slack.com/archives/C123/p1700000000000000" --metadata-only
+
 # Fail instead of silently skipping incomplete global message-search matches
 agent-slack search messages "alias" --require-complete-results
+
+# Return only strictly validated message refs (no hydration, content, or downloads)
+agent-slack search messages "alias" --metadata-only
 
 # Recent channel messages that are marked with :eyes:
 agent-slack message list "#general" --with-reaction eyes --oldest "1770165109.000000" --limit 20
@@ -260,7 +266,8 @@ uses Slack's undocumented `subscriptions.thread.remove` client endpoint, and rea
 subscription state back to verify `subscribed: false`. Running it again returns
 `status: "already_unsubscribed"` without repeating the mutation. Only exact HTTPS Slack
 message URLs are accepted. `--expected-user-id` must be a canonical `U...` or `W...` ID;
-every credential attempt must match it through `auth.test` before subscription access.
+every credential attempt must match it through `auth.test`, bind to the target workspace
+origin and team ID, and pass a `team.info` cross-check before subscription access.
 
 ### Compose a message (browser editor)
 
@@ -485,12 +492,17 @@ including both arrays when they are empty:
 
 ```json
 {
-  "mention_evidence": {
-    "schema": 2,
-    "complete": true,
-    "user_ids": ["U12345678"],
-    "usergroup_ids": ["S12345678"]
-  }
+  "thread_complete": true,
+  "messages": [
+    {
+      "mention_evidence": {
+        "schema": 2,
+        "complete": true,
+        "user_ids": ["U12345678"],
+        "usergroup_ids": ["S12345678"]
+      }
+    }
+  ]
 }
 ```
 
@@ -500,13 +512,32 @@ by `mrkdwn_in`. It excludes plain-text lookalikes, blockquotes, inline or fenced
 and forwarded or unfurled bodies. `complete: false` means an unknown or unsupported
 message surface was present; mutation automation must refuse to act on incomplete or
 unrecognized evidence schemas. The field is absent unless the flag is enabled, and the
-flag applies only to `message list`.
+flag applies only to `message list`. In thread mode, the command validates every page,
+cursor boundary, message timestamp, thread root, and any root `reply_count` before producing
+output, then adds the exact top-level field `thread_complete: true`. It fails without partial output when that
+boundary cannot be proven. Thread-driven mutation automation must require this exact field
+in addition to complete schema 2 evidence on every message. Channel-history mode does not
+emit `thread_complete` because it is a bounded history window, not a complete thread.
+
+Use `message list --metadata-only` for automation that needs no rendered message body or
+files. It implies mention metadata, scans the original Slack mention surfaces before
+discarding content, skips file enrichment and downloads, and emits exact top-level
+`metadata_only: true`. Each message contains only `ts`, validated `author`, and
+`mention_evidence`; complete thread reads also contain `thread_complete: true`. It cannot
+be combined with `--include-reactions`, `--resolve-users`, or `--refresh-users`.
 
 For mutation workflows built from global search results, pass
 `search messages --require-complete-results`. It validates Slack's reported pagination
 and fails without partial output if a match is malformed, cannot resolve to a channel,
 has no exact matching permalink, or cannot be fetched. This option cannot be combined
 with `--channel` fallback search.
+
+Use `search messages --metadata-only` to return only validated `channel_id`, `ts`, and
+`permalink` refs. It implies strict complete-result validation, emits exact top-level
+`metadata_only: true`, and never fetches full messages, renders content, enriches files,
+or downloads attachments. It cannot be combined with `--channel`, non-`any`
+`--content-type` filtering, or user-resolution options, and is not available for
+`search all` or `search files`.
 
 When to use which:
 

@@ -55,6 +55,7 @@ export type MessageCommandOptions = {
   withoutReaction?: string[];
   includeReactions?: boolean;
   includeMentionMetadata?: boolean;
+  metadataOnly?: boolean;
   resolveUsers?: boolean;
   refreshUsers?: boolean;
 };

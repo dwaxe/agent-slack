@@ -30,6 +30,7 @@ export function toSlackMessageSummary(input: {
   message: Record<string, unknown>;
   fallbackTs?: string;
   files?: SlackFileSummary[];
+  renderMarkdown?: boolean;
 }): SlackMessageSummary {
   const text = getString(input.message.text) ?? "";
   return {
@@ -40,7 +41,7 @@ export function toSlackMessageSummary(input: {
     user: getString(input.message.user),
     bot_id: getString(input.message.bot_id),
     text,
-    markdown: slackMrkdwnToMarkdown(text),
+    markdown: input.renderMarkdown === false ? "" : slackMrkdwnToMarkdown(text),
     // Preserve malformed/future values so notification evidence can fail closed
     // instead of silently treating them as Slack's default `true`.
     mrkdwn: input.message.mrkdwn,

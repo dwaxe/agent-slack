@@ -38,13 +38,29 @@ When automation needs canonical direct-notification targets, use
 `message list --include-mention-metadata`. Each listed message then has schema 2
 `mention_evidence` with a `complete` boolean. Mutation workflows must require the exact
 known schema and `complete: true`; evidence excludes quoted, code, plain-text, and
-forwarded-body lookalikes.
+forwarded-body lookalikes. In thread mode, also require the exact top-level
+`thread_complete: true`; the command emits it only after validating every page and the
+thread root, including any reported root reply count, and fails without partial output
+otherwise. Channel-history mode does not
+emit `thread_complete`.
+
+For a content-free automation boundary, use `message list --metadata-only`. It implies
+mention metadata and emits exact `metadata_only: true`, preserves only `ts`, `author`, and
+`mention_evidence` per message, and skips rendering, file enrichment, and downloads. A
+thread result still requires exact `thread_complete: true` before mutation automation.
+Do not combine it with reaction inclusion or user-resolution options.
 
 For mutation automation driven by global message search, pass
 `search messages --require-complete-results`. It fails the command instead of silently
 skipping malformed, unresolvable, unfetchable, or non-canonical permalink matches, and
 validates the reported pagination before proving the result boundary. It is incompatible
 with the `--channel` history fallback.
+
+Use `search messages --metadata-only` when discovery should expose refs but no message
+body or attachments. It implies strict complete-result validation, emits exact
+`metadata_only: true`, and returns only `channel_id`, `ts`, and `permalink` without
+hydrating messages or downloading files. It is global-search only and cannot be combined
+with `--channel`, non-`any` content-type filtering, or user-resolution options.
 
 For scheduled writes, prefer `--schedule` with an ISO 8601 timestamp and explicit offset when timezone matters. Named `--schedule-in` phrases use the executing environment's local timezone; confirm that it matches the user's intent.
 
@@ -54,9 +70,11 @@ Ordinary `message send` and `message edit` calls auto-convert lists. `message se
 
 Slack-native drafts (`message draft list|create|update|delete`) manage drafts that appear in the user's Slack client; `create` posts nothing. They use undocumented session endpoints and require browser-style auth (xoxc/xoxd).
 
-`thread unsubscribe --expected-user-id <U...|W...> <message-url>` stops following one exact thread. It requires an exact HTTPS Slack message URL and browser-style auth, verifies the authenticated actor before subscription access, uses an undocumented session endpoint, and verifies the resulting subscription state.
+`thread unsubscribe --expected-user-id <U...|W...> <message-url>` stops following one exact thread. It requires an exact HTTPS Slack message URL and browser-style auth, verifies the authenticated actor and target workspace before subscription access, uses an undocumented session endpoint, and verifies the resulting subscription state.
 
 ## Conditional references
 
+- Read [references/commands.md](references/commands.md) for unfamiliar commands or flags,
+  including metadata-only reads and thread-subscription mutations.
 - Read [references/targets.md](references/targets.md) only when choosing between a message URL, channel, or user target, or when resolving multiple workspaces.
 - Read [references/output.md](references/output.md) only when handling returned message, canvas, or thread-subscription metadata, resolved users, or downloaded and failed attachments.

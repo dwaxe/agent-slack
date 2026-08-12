@@ -51,17 +51,35 @@ describe("agent-facing help contracts", () => {
     const get = findCommand(program, "message", "get");
 
     expect(optionDescription(list, "--include-mention-metadata")).toBe(
-      "Include schema 2 direct-notification evidence (complete or incomplete) per message",
+      "Include schema 2 mention evidence; emit thread_complete only after strict thread pagination",
     );
     expect(get.options.some((option) => option.long === "--include-mention-metadata")).toBe(false);
+    expect(optionDescription(list, "--metadata-only")).toBe(
+      "Return only ts, author, and schema 2 mention evidence; thread mode also proves thread_complete",
+    );
+    expect(get.options.some((option) => option.long === "--metadata-only")).toBe(false);
   });
 
   test("message search exposes fail-closed result handling", () => {
-    const messages = findCommand(buildProgram(), "search", "messages");
+    const program = buildProgram();
+    const messages = findCommand(program, "search", "messages");
 
     expect(optionDescription(messages, "--require-complete-results")).toContain(
       "malformed, unresolvable, or unfetchable",
     );
+    expect(optionDescription(messages, "--metadata-only")).toBe(
+      "Return verified channel_id, ts, and permalink refs only; implies strict complete results and no downloads",
+    );
+    expect(
+      findCommand(program, "search", "all").options.some(
+        (option) => option.long === "--metadata-only",
+      ),
+    ).toBe(false);
+    expect(
+      findCommand(program, "search", "files").options.some(
+        (option) => option.long === "--metadata-only",
+      ),
+    ).toBe(false);
   });
 
   test("message send documents non-obvious formatting and scheduling behavior", () => {
