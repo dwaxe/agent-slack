@@ -114,6 +114,7 @@ describe("credential ingestion", () => {
             browserWorkspace("https://team.slack.com"),
             browserWorkspace("https://agency.slack-gov.com"),
             browserWorkspace("https://legacy-only.slack.com"),
+            browserWorkspace("https://legacy-only.slack-gov.com"),
           ],
         }),
       );
@@ -132,7 +133,7 @@ describe("credential ingestion", () => {
         credentials.workspaces.map((workspace) =>
           workspace.auth.auth_type === "browser" ? workspace.auth.xoxd_cookie : null,
         ),
-      ).toEqual(["xoxd-commercial", "xoxd-gov", "xoxd-unscoped-legacy"]);
+      ).toEqual(["xoxd-commercial", "xoxd-gov", "xoxd-unscoped-legacy", "__KEYCHAIN__"]);
       expect(writes).toEqual([
         {
           account: "xoxd:https://legacy-only.slack.com",
