@@ -95,6 +95,10 @@ export function registerMessageCommand(input: { program: Command; ctx: CliContex
       "8000",
     )
     .option("--include-reactions", "Include reactions + reacting users")
+    .option(
+      "--include-mention-metadata",
+      "Include schema-versioned direct notification mention evidence per message",
+    )
     .option("--resolve-users", "Resolve user IDs to user profiles")
     .option(
       "--refresh-users",

@@ -205,6 +205,9 @@ agent-slack message list "https://workspace.slack.com/archives/C123/p17000000000
 # Recent channel messages (browse channel history)
 agent-slack message list "#general" --limit 20
 
+# Include machine-readable direct notification mentions on every listed message
+agent-slack message list "#general" --limit 20 --include-mention-metadata
+
 # Recent channel messages that are marked with :eyes:
 agent-slack message list "#general" --with-reaction eyes --oldest "1770165109.000000" --limit 20
 
@@ -469,6 +472,25 @@ Notes:
   ]
 }
 ```
+
+Pass `--include-mention-metadata` when automation needs notification targets without
+parsing rendered Markdown. Every listed message then includes a stable evidence object,
+including both arrays when they are empty:
+
+```json
+{
+  "mention_evidence": {
+    "schema": 1,
+    "user_ids": ["U12345678"],
+    "usergroup_ids": ["S12345678"]
+  }
+}
+```
+
+Evidence is limited to direct, unescaped mentions in the message's top-level raw text
+and semantic top-level blocks. It excludes plain-text lookalikes, blockquotes, inline
+or fenced code, and forwarded or attachment bodies. The field is absent unless the
+flag is enabled, and the flag applies only to `message list`.
 
 When to use which:
 

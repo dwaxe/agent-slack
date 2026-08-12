@@ -22,6 +22,35 @@ import {
   resolveUsersById,
   toReferencedUsers,
 } from "../slack/user-cache.ts";
+import { isRecord } from "../lib/object-type-guards.ts";
+
+function pruneMessageListPayload(
+  payload: Record<string, unknown>,
+  includeMentionMetadata: boolean,
+): Record<string, unknown> {
+  const pruned = pruneEmpty(payload) as Record<string, unknown>;
+  if (!includeMentionMetadata) {
+    return pruned;
+  }
+
+  const sourceMessages = Array.isArray(payload.messages) ? payload.messages : [];
+  if (sourceMessages.length === 0) {
+    return pruned;
+  }
+  const outputMessages = pruned.messages;
+  if (!Array.isArray(outputMessages) || outputMessages.length !== sourceMessages.length) {
+    throw new Error("Mention evidence could not be preserved in message list output");
+  }
+  for (const [index, sourceMessage] of sourceMessages.entries()) {
+    const outputMessage = outputMessages[index];
+    const mentionEvidence = isRecord(sourceMessage) ? sourceMessage.mention_evidence : undefined;
+    if (!isRecord(mentionEvidence) || !isRecord(outputMessage)) {
+      throw new Error("Mention evidence could not be preserved in message list output");
+    }
+    outputMessage.mention_evidence = mentionEvidence;
+  }
+  return pruned;
+}
 
 export async function handleMessageGet(input: {
   ctx: CliContext;
@@ -153,6 +182,7 @@ export async function handleMessageList(input: {
         warnOnTruncatedSlackUrl(ref);
         const { client, auth } = await input.ctx.getClientForWorkspace(ref.workspace_url);
         const includeReactions = Boolean(input.options.includeReactions);
+        const includeMentionMetadata = Boolean(input.options.includeMentionMetadata);
         const msg = await fetchMessage(client, { ref, includeReactions });
         const rootTs = msg.thread_ts ?? msg.ts;
         const threadMessages = await fetchThread(client, {
@@ -174,12 +204,23 @@ export async function handleMessageList(input: {
                 forceRefresh: Boolean(input.options.refreshUsers),
               })
             : new Map();
-        return pruneEmpty({
-          messages: threadMessages
-            .map((m) => toCompactMessage(m, { maxBodyChars, includeReactions, downloadedPaths }))
-            .map(toThreadListMessage),
-          referenced_users: toReferencedUsers(referencedUserIds, usersById),
-        }) as Record<string, unknown>;
+        const messages = threadMessages
+          .map((m) =>
+            toCompactMessage(m, {
+              maxBodyChars,
+              includeReactions,
+              includeMentionMetadata,
+              downloadedPaths,
+            }),
+          )
+          .map(toThreadListMessage);
+        return pruneMessageListPayload(
+          {
+            messages,
+            referenced_users: toReferencedUsers(referencedUserIds, usersById),
+          },
+          includeMentionMetadata,
+        );
       }
 
       const { client, auth, workspace_url } = await input.ctx.getClientForWorkspace(workspaceUrl);
@@ -197,6 +238,7 @@ export async function handleMessageList(input: {
       // No thread specifier → list recent channel messages
       if (!threadTs && !ts) {
         const includeReactions = Boolean(input.options.includeReactions);
+        const includeMentionMetadata = Boolean(input.options.includeMentionMetadata);
         const limit = parseLimit(input.options.limit);
         const oldest = requireOldestWhenReactionFiltersUsed({
           oldest: input.options.oldest,
@@ -226,13 +268,22 @@ export async function handleMessageList(input: {
                 forceRefresh: Boolean(input.options.refreshUsers),
               })
             : new Map();
-        return pruneEmpty({
-          channel_id: channelId,
-          messages: channelMessages.map((m) =>
-            toCompactMessage(m, { maxBodyChars, includeReactions, downloadedPaths }),
-          ),
-          referenced_users: toReferencedUsers(referencedUserIds, usersById),
-        }) as Record<string, unknown>;
+        const messages = channelMessages.map((m) =>
+          toCompactMessage(m, {
+            maxBodyChars,
+            includeReactions,
+            includeMentionMetadata,
+            downloadedPaths,
+          }),
+        );
+        return pruneMessageListPayload(
+          {
+            channel_id: channelId,
+            messages,
+            referenced_users: toReferencedUsers(referencedUserIds, usersById),
+          },
+          includeMentionMetadata,
+        );
       }
 
       if (hasReactionFilters) {
@@ -256,6 +307,7 @@ export async function handleMessageList(input: {
         })());
 
       const includeReactions = Boolean(input.options.includeReactions);
+      const includeMentionMetadata = Boolean(input.options.includeMentionMetadata);
       const threadMessages = await fetchThread(client, {
         channelId,
         threadTs: rootTs,
@@ -275,12 +327,23 @@ export async function handleMessageList(input: {
               forceRefresh: Boolean(input.options.refreshUsers),
             })
           : new Map();
-      return pruneEmpty({
-        messages: threadMessages
-          .map((m) => toCompactMessage(m, { maxBodyChars, includeReactions, downloadedPaths }))
-          .map(toThreadListMessage),
-        referenced_users: toReferencedUsers(referencedUserIds, usersById),
-      }) as Record<string, unknown>;
+      const messages = threadMessages
+        .map((m) =>
+          toCompactMessage(m, {
+            maxBodyChars,
+            includeReactions,
+            includeMentionMetadata,
+            downloadedPaths,
+          }),
+        )
+        .map(toThreadListMessage);
+      return pruneMessageListPayload(
+        {
+          messages,
+          referenced_users: toReferencedUsers(referencedUserIds, usersById),
+        },
+        includeMentionMetadata,
+      );
     },
   });
 }

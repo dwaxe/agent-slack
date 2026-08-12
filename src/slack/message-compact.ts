@@ -2,6 +2,7 @@ import type { SlackMessageSummary } from "./messages.ts";
 import type { DownloadResult } from "./files.ts";
 import { renderSlackMessageContent } from "./render.ts";
 import { getNumber, getString, isRecord } from "../lib/object-type-guards.ts";
+import { collectDirectMessageMentions, type MentionEvidence } from "./message-mentions.ts";
 import { isUserId } from "./user-id.ts";
 
 export type CompactSlackMessage = {
@@ -10,6 +11,7 @@ export type CompactSlackMessage = {
   thread_ts?: string;
   author?: { user_id?: string; bot_id?: string };
   content?: string;
+  mention_evidence?: MentionEvidence;
   files?: {
     name?: string;
     mimetype?: string;
@@ -36,11 +38,15 @@ export function toCompactMessage(
     maxSnippetChars?: number;
     maxBodyChars?: number;
     includeReactions?: boolean;
+    includeMentionMetadata?: boolean;
     downloadedPaths?: Record<string, DownloadResult>;
   },
 ): CompactSlackMessage {
   const maxBodyChars = input?.maxBodyChars ?? 8000;
   const includeReactions = input?.includeReactions ?? false;
+  const mentionEvidence = input?.includeMentionMetadata
+    ? collectDirectMessageMentions(msg)
+    : undefined;
 
   const rendered = renderSlackMessageContent(msg);
   const content =
@@ -72,6 +78,7 @@ export function toCompactMessage(
     thread_ts: msg.thread_ts ?? ((msg.reply_count ?? 0) > 0 ? msg.ts : undefined),
     author: msg.user || msg.bot_id ? { user_id: msg.user, bot_id: msg.bot_id } : undefined,
     content: content ? content : undefined,
+    ...(mentionEvidence ? { mention_evidence: mentionEvidence } : {}),
     files: files && files.length > 0 ? files : undefined,
     reactions: includeReactions ? compactReactions(msg.reactions) : undefined,
     forwarded_threads: extractForwardedThreads(msg.attachments),

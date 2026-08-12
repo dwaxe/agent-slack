@@ -43,6 +43,15 @@ function buildProgram(): Command {
 }
 
 describe("agent-facing help contracts", () => {
+  test("message list exposes opt-in notification mention evidence", () => {
+    const program = buildProgram();
+    const list = findCommand(program, "message", "list");
+    const get = findCommand(program, "message", "get");
+
+    expect(optionDescription(list, "--include-mention-metadata")).toContain("schema-versioned");
+    expect(get.options.some((option) => option.long === "--include-mention-metadata")).toBe(false);
+  });
+
   test("message send documents non-obvious formatting and scheduling behavior", () => {
     const send = findCommand(buildProgram(), "message", "send");
 
