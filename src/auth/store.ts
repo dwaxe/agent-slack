@@ -5,7 +5,7 @@ import { keychainGet, keychainSet } from "./keychain.ts";
 import { platform } from "node:os";
 import { readFile } from "node:fs/promises";
 import { isRecord } from "../lib/object-type-guards.ts";
-import { normalizeSlackWorkspaceUrl } from "../slack/workspace-url.ts";
+import { normalizeSlackWorkspaceUrl, slackRealmForWorkspaceUrl } from "../slack/workspace-url.ts";
 
 const KEYCHAIN_PLACEHOLDER = "__KEYCHAIN__";
 const LEGACY_BROWSER_COOKIE_ACCOUNT = "xoxd";
@@ -69,7 +69,11 @@ export async function loadCredentials(options?: {
       const xoxc = readKeychain(account, KEYCHAIN_SERVICE);
       const cookieAccount = browserCookieAccount(w.workspace_url);
       let xoxd = readKeychain(cookieAccount, KEYCHAIN_SERVICE);
-      if (!xoxd && w.auth.xoxd_cookie === KEYCHAIN_PLACEHOLDER) {
+      if (
+        !xoxd &&
+        w.auth.xoxd_cookie === KEYCHAIN_PLACEHOLDER &&
+        slackRealmForWorkspaceUrl(w.workspace_url) === "commercial"
+      ) {
         const legacy = readLegacyBrowserCookie();
         if (legacy) {
           // Older releases stored one session cookie under the global `xoxd` account.
