@@ -13,6 +13,7 @@ const KNOWN_SUBTYPE_FLAGS = new Set([
   "is_share",
   "is_thread_root_unfurl",
 ]);
+const APP_UNFURL_OPAQUE_KEYS = new Set(["work_object_entity"]);
 const KNOWN_KEYS = new Set([
   "actions",
   "app_id",
@@ -122,6 +123,22 @@ function isExcluded(attachment: Record<string, unknown>): boolean {
   );
 }
 
+function validateAppUnfurlOpaqueFields(
+  attachment: Record<string, unknown>,
+  state: MentionScanState,
+): void {
+  if (!hasOwn(attachment, "work_object_entity")) {
+    return;
+  }
+  if (
+    attachment.is_app_unfurl !== true ||
+    !isRecord(attachment.work_object_entity) ||
+    Array.isArray(attachment.work_object_entity)
+  ) {
+    markMentionScanIncomplete(state);
+  }
+}
+
 function hasUnknownSubtype(attachment: Record<string, unknown>, state: MentionScanState): boolean {
   const unknown = Object.entries(attachment).some(
     ([key, value]) =>
@@ -229,9 +246,15 @@ export function collectAttachmentMentions(attachments: unknown, state: MentionSc
     if (hasUnknownSubtype(attachment, state)) {
       continue;
     }
-    if (Object.keys(attachment).some((key) => !KNOWN_KEYS.has(key))) {
+    const knownKeys =
+      attachment.is_app_unfurl === true
+        ? new Set([...KNOWN_KEYS, ...APP_UNFURL_OPAQUE_KEYS])
+        : KNOWN_KEYS;
+    if (Object.keys(attachment).some((key) => !knownKeys.has(key))) {
       markMentionScanIncomplete(state);
     }
+    // Work Object metadata belongs to an app-generated preview, not the message's notification surface.
+    validateAppUnfurlOpaqueFields(attachment, state);
     if (isExcluded(attachment)) {
       continue;
     }

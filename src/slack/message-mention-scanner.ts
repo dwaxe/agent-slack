@@ -1,4 +1,5 @@
 import { isRecord } from "../lib/object-type-guards.ts";
+import { ATTACHMENT_MENTION_KEYS, isValidAttachmentMention } from "./message-attachment-mention.ts";
 import { isUserId } from "./user-id.ts";
 
 const USER_ID_PATTERN = /^[UW][A-Z0-9]{8,19}$/;
@@ -10,6 +11,7 @@ const BLOCKQUOTE_LINE_PATTERN = /^[\t ]*>/;
 const MULTILINE_BLOCKQUOTE_LINE_PATTERN = /^[\t ]*>>>/;
 const RICH_TEXT_STYLE_KEYS = new Set(["bold", "code", "italic", "strike", "underline"]);
 const RICH_TEXT_LEAF_KEYS: Record<string, ReadonlySet<string>> = {
+  attachment_mention: ATTACHMENT_MENTION_KEYS,
   broadcast: new Set(["type", "range", "style"]),
   channel: new Set(["type", "channel_id", "style"]),
   color: new Set(["type", "value", "style"]),
@@ -141,9 +143,13 @@ export function collectMrkdwnMentions(text: string, mentions: MentionScanState):
 
 function collectRichTextInlineElement(
   value: unknown,
-  input: { state: MentionScanState; includeMentions: boolean },
+  input: {
+    state: MentionScanState;
+    includeMentions: boolean;
+    allowAttachmentMention: boolean;
+  },
 ): void {
-  const { state, includeMentions } = input;
+  const { state, includeMentions, allowAttachmentMention } = input;
   if (!isRecord(value) || typeof value.type !== "string") {
     markMentionScanIncomplete(state);
     return;
@@ -155,6 +161,13 @@ function collectRichTextInlineElement(
   }
   if (!hasOnlyKnownKeys(value, knownKeys)) {
     markMentionScanIncomplete(state);
+  }
+  // Slack attachment mentions are reference previews, not notification-bearing user mentions.
+  if (value.type === "attachment_mention") {
+    if (!allowAttachmentMention || !isValidAttachmentMention(value)) {
+      markMentionScanIncomplete(state);
+    }
+    return;
   }
   validateRichTextStyle(value.style, state);
   if (value.type === "user") {
@@ -226,7 +239,7 @@ function collectRichTextInlineElement(
 
 function collectRichTextSection(
   value: Record<string, unknown>,
-  input: { state: MentionScanState; includeMentions: boolean },
+  input: { state: MentionScanState; includeMentions: boolean; allowAttachmentMention: true },
 ): void {
   const { state } = input;
   if (!hasOnlyKnownKeys(value, new Set(["type", "elements"]))) {
@@ -263,14 +276,19 @@ function collectRichTextList(value: Record<string, unknown>, state: MentionScanS
       markMentionScanIncomplete(state);
       continue;
     }
-    collectRichTextSection(element, { state, includeMentions: true });
+    collectRichTextSection(element, {
+      state,
+      includeMentions: true,
+      allowAttachmentMention: true,
+    });
   }
 }
 
 function collectExcludedRichTextContainer(
   value: Record<string, unknown>,
-  state: MentionScanState,
+  input: { state: MentionScanState; allowAttachmentMention: boolean },
 ): void {
+  const { state, allowAttachmentMention } = input;
   if (!hasOnlyKnownKeys(value, new Set(["type", "elements", "border"]))) {
     markMentionScanIncomplete(state);
   }
@@ -282,7 +300,11 @@ function collectExcludedRichTextContainer(
     return;
   }
   for (const element of value.elements) {
-    collectRichTextInlineElement(element, { state, includeMentions: false });
+    collectRichTextInlineElement(element, {
+      state,
+      includeMentions: false,
+      allowAttachmentMention,
+    });
   }
 }
 
@@ -301,11 +323,17 @@ export function collectRichTextBlock(value: unknown, state: MentionScanState): v
       continue;
     }
     if (element.type === "rich_text_section") {
-      collectRichTextSection(element, { state, includeMentions: true });
+      collectRichTextSection(element, {
+        state,
+        includeMentions: true,
+        allowAttachmentMention: true,
+      });
     } else if (element.type === "rich_text_list") {
       collectRichTextList(element, state);
-    } else if (element.type === "rich_text_quote" || element.type === "rich_text_preformatted") {
-      collectExcludedRichTextContainer(element, state);
+    } else if (element.type === "rich_text_quote") {
+      collectExcludedRichTextContainer(element, { state, allowAttachmentMention: true });
+    } else if (element.type === "rich_text_preformatted") {
+      collectExcludedRichTextContainer(element, { state, allowAttachmentMention: false });
     } else {
       markMentionScanIncomplete(state);
     }
