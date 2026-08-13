@@ -15,7 +15,7 @@ const RICH_TEXT_LEAF_KEYS: Record<string, ReadonlySet<string>> = {
   color: new Set(["type", "value", "style"]),
   date: new Set(["type", "timestamp", "format", "url", "fallback", "style"]),
   emoji: new Set(["type", "name", "unicode", "url", "style"]),
-  link: new Set(["type", "url", "text", "unsafe", "style"]),
+  link: new Set(["type", "url", "text", "unsafe", "truncated", "style"]),
   team: new Set(["type", "team_id", "style"]),
   text: new Set(["type", "text", "style"]),
   user: new Set(["type", "user_id", "style"]),
@@ -210,6 +210,9 @@ function collectRichTextInlineElement(
     }
     validateOptionalString(value.text, state);
     if (value.unsafe !== undefined && typeof value.unsafe !== "boolean") {
+      markMentionScanIncomplete(state);
+    }
+    if (value.truncated !== undefined && typeof value.truncated !== "boolean") {
       markMentionScanIncomplete(state);
     }
   } else if (value.type === "team") {
