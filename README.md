@@ -384,7 +384,13 @@ agent-slack message send "#general" "Decision: shipping v2 today" \
   --thread-ts "1770160000.000001" --reply-broadcast
 ```
 
-Scheduled sends use Slack's server-side scheduled message queue:
+Scheduled sends use Slack's native server-side scheduling. Standard bot/user-token auth uses
+`chat.scheduleMessage`; Slack Desktop/browser auth creates the same native scheduled drafts that
+Slack's clients use, so the message is delivered by Slack even when `agent-slack` is not running.
+Browser-auth scheduled sends accept only non-empty top-level `rich_text` blocks because Slack
+Desktop strips or tombstones other native-draft content. On Enterprise Grid, browser-auth
+scheduling resolves and verifies the organization endpoint that Slack uses for drafts while
+preserving the target workspace and channel.
 
 ```bash
 # Absolute time with explicit timezone; replace with a future value within 120 days
@@ -405,7 +411,15 @@ Manage pending scheduled messages:
 agent-slack message scheduled list
 agent-slack message scheduled list --channel "#general" --limit 25
 agent-slack message scheduled cancel "Q1234ABCD" --channel "C12345678"
+agent-slack message scheduled cancel "Dr1234ABCD" --channel "C12345678"
 ```
+
+Standard-token scheduled message IDs start with `Q`; Desktop/browser-auth scheduled draft IDs start
+with `Dr`. `message scheduled list` and `cancel` automatically use the matching Slack-native backend
+for the selected workspace, including Enterprise Grid organization routing. Native scheduled-draft
+listings read at most 100 records and include `"has_more": true` when Slack reports additional
+drafts; the internal API exposes no pagination cursor. `--cursor` applies only to standard-token
+pagination.
 
 Example — post a message with a native Slack table block:
 

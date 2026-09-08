@@ -1,6 +1,11 @@
-import type { SlackApiClient } from "./client.ts";
+import type { SlackApiClient, SlackAuth } from "./client.ts";
 import { asArray, getNumber, getString, isRecord } from "../lib/object-type-guards.ts";
 import { canonicalSlackTextContentSha256 } from "./content-identity.ts";
+import {
+  cancelNativeScheduledMessage,
+  listNativeScheduledMessages,
+  scheduleNativeMessage,
+} from "./native-scheduled-messages.ts";
 import {
   normalizeSlackScheduledMessageId,
   slackScheduledMessageApiId,
@@ -21,6 +26,45 @@ export type ScheduledMessageReceiptIdentity = {
   unique: boolean;
 };
 
+type SlackAuthType = SlackAuth["auth_type"];
+
+export async function scheduleMessage(
+  client: SlackApiClient,
+  input: {
+    authType: SlackAuthType;
+    channelId: string;
+    text: string;
+    draftText?: string;
+    postAt: number;
+    threadTs?: string;
+    replyBroadcast?: boolean;
+    blocks?: unknown[] | null;
+    unfurl?: boolean;
+  },
+): Promise<Record<string, unknown>> {
+  if (input.authType === "browser") {
+    return await scheduleNativeMessage(client, {
+      channelId: input.channelId,
+      text: input.draftText ?? input.text,
+      postAt: input.postAt,
+      threadTs: input.threadTs,
+      replyBroadcast: input.replyBroadcast,
+      blocks: input.blocks,
+      unfurl: input.unfurl,
+    });
+  }
+
+  return await client.api("chat.scheduleMessage", {
+    channel: input.channelId,
+    text: input.text,
+    post_at: input.postAt,
+    thread_ts: input.threadTs,
+    ...(input.blocks ? { blocks: input.blocks } : {}),
+    ...(input.replyBroadcast && input.threadTs ? { reply_broadcast: true } : {}),
+    ...(input.unfurl === false ? { unfurl_links: false, unfurl_media: false } : {}),
+  });
+}
+
 export async function listScheduledMessages(
   client: SlackApiClient,
   options?: {
@@ -29,12 +73,18 @@ export async function listScheduledMessages(
     oldest?: string;
     latest?: string;
     limit?: number;
+    authType?: SlackAuthType;
   },
 ): Promise<{
   ok: true;
   scheduled_messages: ScheduledMessage[];
   next_cursor?: string;
+  has_more?: boolean;
 }> {
+  if (options?.authType === "browser") {
+    return await listNativeScheduledMessages(client, options);
+  }
+
   const resp = await client.api("chat.scheduledMessages.list", {
     channel: options?.channelId,
     cursor: options?.cursor,
@@ -53,8 +103,12 @@ export async function listScheduledMessages(
 
 export async function cancelScheduledMessage(
   client: SlackApiClient,
-  input: { channelId: string; scheduledMessageId: string },
+  input: { channelId: string; scheduledMessageId: string; authType?: SlackAuthType },
 ): Promise<void> {
+  if (input.authType === "browser") {
+    return await cancelNativeScheduledMessage(client, input);
+  }
+
   await client.api("chat.deleteScheduledMessage", {
     channel: input.channelId,
     scheduled_message_id: slackScheduledMessageApiId(input.scheduledMessageId),
@@ -67,7 +121,12 @@ export async function cancelScheduledMessage(
  */
 export async function findScheduledMessageReceiptIdentity(
   client: SlackApiClient,
-  input: { channelId: string; scheduledMessageId: string; pageCap?: number },
+  input: {
+    channelId: string;
+    scheduledMessageId: string;
+    pageCap?: number;
+    authType?: SlackAuthType;
+  },
 ): Promise<ScheduledMessageReceiptIdentity | undefined> {
   const pageCap = input.pageCap ?? 100;
   if (!Number.isSafeInteger(pageCap) || pageCap < 1 || pageCap > 100) {
@@ -82,6 +141,7 @@ export async function findScheduledMessageReceiptIdentity(
       channelId: input.channelId,
       cursor,
       limit: 100,
+      authType: input.authType,
     });
     for (const scheduled of listing.scheduled_messages) {
       const rawId = scheduled.id ?? scheduled.scheduled_message_id;
@@ -108,6 +168,11 @@ export async function findScheduledMessageReceiptIdentity(
 
     const nextCursor = listing.next_cursor?.trim();
     if (!nextCursor) {
+      if (listing.has_more) {
+        throw new Error(
+          "Slack-native scheduled draft reconciliation is incomplete because drafts.list returned more than 100 records without a pagination cursor",
+        );
+      }
       const target = scheduledMessages.find((scheduled) => scheduled.id === targetId);
       if (!target) {
         return undefined;

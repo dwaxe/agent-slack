@@ -43,7 +43,7 @@ only validated `channel_id`, `ts`, and `permalink` fields. It implies strict com
 results and does not hydrate messages, render content, enrich files, or download files.
 It cannot be combined with channel fallback, content-type filtering, or user resolution.
 
-Immediate non-attachment sends return `ts` and usually a `permalink`. Attachment sends return `ts` when Slack supplies share metadata; scheduled sends return `scheduled_message_id` and `post_at` instead.
+Immediate non-attachment sends return `ts` and usually a `permalink`. Attachment sends return `ts` when Slack supplies share metadata; scheduled sends return `scheduled_message_id` and `post_at` instead. Standard-token scheduled IDs begin with `Q`; Slack Desktop/browser-auth scheduled draft IDs begin with `Dr`. Both are managed through `message scheduled list|cancel`. Native scheduled-draft listings may include `has_more: true`; Slack exposes no cursor for the remaining records.
 
 ## Thread subscription mutations
 

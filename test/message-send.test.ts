@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CliContext } from "../src/cli/context.ts";
+import type { SlackAuth } from "../src/slack/client.ts";
 import { composeMessage } from "../src/cli/compose-actions.ts";
 import { editMessage, sendMessage } from "../src/cli/message-actions.ts";
 import {
@@ -21,8 +22,24 @@ const TEST_CREDENTIAL_FINGERPRINT = "f".repeat(64);
 
 function createContext(
   calls: { method: string; params: Record<string, unknown> }[],
-  fixtures: { historyMessages?: Record<string, unknown>[] } = {},
+  options:
+    | "standard"
+    | "browser"
+    | {
+        auth?: SlackAuth;
+        authType?: "standard" | "browser";
+        draftsHasMore?: boolean;
+        historyMessages?: Record<string, unknown>[];
+      } = "standard",
 ) {
+  const fixtures = typeof options === "string" ? { authType: options } : options;
+  const authType = fixtures.authType ?? "standard";
+  const auth =
+    fixtures.auth ??
+    (authType === "browser"
+      ? ({ auth_type: "browser", xoxc_token: "xoxc-test", xoxd_cookie: "xoxd-test" } as const)
+      : ({ auth_type: "standard", token: "x" } as const));
+  const draftsHasMore = fixtures.draftsHasMore === true;
   const client = {
     credentialFingerprint: () => TEST_CREDENTIAL_FINGERPRINT,
     api: async (method: string, params: Record<string, unknown>) => {
@@ -34,6 +51,9 @@ function createContext(
           team_id: "T12345678",
           user_id: "U12345678",
         };
+      }
+      if (method === "team.info") {
+        return { ok: true, team: { id: "T12345678" } };
       }
       if (method === "files.getUploadURLExternal") {
         return { ok: true, upload_url: "https://upload.example/file", file_id: "F123" };
@@ -85,6 +105,46 @@ function createContext(
       if (method === "chat.deleteScheduledMessage") {
         return { ok: true };
       }
+      if (method === "drafts.create") {
+        return {
+          ok: true,
+          draft: {
+            id: "Dr1234ABCD",
+            last_updated_ts: "1770165109.628379",
+            date_scheduled: Number(params.date_scheduled),
+            destinations: params.destinations,
+            blocks: params.blocks,
+          },
+        };
+      }
+      if (method === "drafts.list") {
+        return {
+          ok: true,
+          drafts: [
+            {
+              id: "Dr1234ABCD",
+              last_updated_ts: "1770165109.628379",
+              date_scheduled: 1770168709,
+              destinations: [{ channel_id: "C12345678" }],
+              blocks: [
+                {
+                  type: "rich_text",
+                  elements: [
+                    {
+                      type: "rich_text_section",
+                      elements: [{ type: "text", text: "scheduled" }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          has_more: draftsHasMore,
+        };
+      }
+      if (method === "drafts.delete") {
+        return { ok: true };
+      }
       if (method === "search.messages") {
         return {
           ok: true,
@@ -110,7 +170,7 @@ function createContext(
     }) => input.work(),
     getClientForWorkspace: async () => ({
       client: client as never,
-      auth: { auth_type: "standard", token: "x" as const },
+      auth,
       workspace_url: "https://workspace.slack.com",
     }),
     normalizeUrl: (u: string) => u,
@@ -130,6 +190,67 @@ function createContext(
     importBrave: async () => null,
     importFirefox: async () => null,
   } satisfies CliContext;
+}
+
+function createEnterpriseGridContext() {
+  const calls: { client: "workspace" | "enterprise"; method: string }[] = [];
+  const workspaceUrl = "https://workspace.slack.com";
+  const enterpriseUrl = "https://grid.enterprise.slack.com";
+  const api =
+    (clientKind: "workspace" | "enterprise") =>
+    async (method: string, params: Record<string, unknown> = {}) => {
+      calls.push({ client: clientKind, method });
+      if (method === "auth.test") {
+        return clientKind === "workspace"
+          ? { ok: true, url: `${workspaceUrl}/`, team_id: "T12345678", user_id: "U12345678" }
+          : { ok: true, team_id: "E12345678", user_id: "U12345678" };
+      }
+      if (method === "team.info") {
+        return {
+          ok: true,
+          team: {
+            id: "T12345678",
+            enterprise_id: "E12345678",
+            enterprise_domain: "grid",
+          },
+        };
+      }
+      if (method === "drafts.create" && clientKind === "enterprise") {
+        return {
+          ok: true,
+          draft: {
+            id: "DrGrid1234",
+            date_scheduled: Number(params.date_scheduled),
+            destinations: params.destinations,
+            blocks: params.blocks,
+          },
+        };
+      }
+      throw new Error(
+        method.startsWith("drafts.") ? "team_is_restricted" : `Unexpected method: ${method}`,
+      );
+    };
+  const auth = {
+    auth_type: "browser" as const,
+    xoxc_token: "xoxc-test",
+    xoxd_cookie: "xoxd-test",
+  };
+  const workspaceClient = {
+    credentialFingerprint: () => TEST_CREDENTIAL_FINGERPRINT,
+    api: api("workspace"),
+  };
+  const enterpriseClient = {
+    credentialFingerprint: () => "e".repeat(64),
+    api: api("enterprise"),
+  };
+  const ctx: CliContext = {
+    ...createContext([]),
+    getClientForWorkspace: async (selector?: string) =>
+      selector === enterpriseUrl
+        ? { client: enterpriseClient as never, auth, workspace_url: enterpriseUrl }
+        : { client: workspaceClient as never, auth, workspace_url: workspaceUrl },
+  };
+  return { ctx, calls };
 }
 
 function receiptLifecycle(
@@ -1068,6 +1189,86 @@ describe("sendMessage", () => {
     });
   });
 
+  test("--schedule uses Slack-native scheduled drafts with browser auth", async () => {
+    const calls: { method: string; params: Record<string, unknown> }[] = [];
+    const ctx = createContext(calls, "browser");
+    const when = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const postAt = Math.floor(Date.parse(when) / 1000);
+
+    const result = await sendMessage({
+      ctx,
+      targetInput: "C12345678",
+      text: "later",
+      options: { schedule: when },
+    });
+
+    expect(calls.map((call) => call.method)).toEqual(["auth.test", "team.info", "drafts.create"]);
+    expect(calls[2]?.params).toMatchObject({
+      date_scheduled: postAt,
+      destinations: [{ channel_id: "C12345678" }],
+      blocks: [
+        {
+          type: "rich_text",
+          elements: [{ type: "rich_text_section", elements: [{ type: "text", text: "later" }] }],
+        },
+      ],
+      file_ids: [],
+      is_from_composer: true,
+    });
+    expect(result).toEqual({
+      ok: true,
+      channel_id: "C12345678",
+      scheduled_message_id: "Dr1234ABCD",
+      post_at: postAt,
+      thread_ts: undefined,
+    });
+  });
+
+  test("browser auth refuses Block Kit that Slack Desktop would strip", async () => {
+    const calls: { method: string; params: Record<string, unknown> }[] = [];
+    const ctx = createContext(calls, "browser");
+    const dir = await mkdtemp(join(tmpdir(), "agent-slack-send-test-"));
+    const blocksPath = join(dir, "blocks.json");
+    await writeFile(
+      blocksPath,
+      JSON.stringify([{ type: "section", text: { type: "mrkdwn", text: "unsafe" } }]),
+    );
+
+    try {
+      await expect(
+        sendMessage({
+          ctx,
+          targetInput: "C12345678",
+          text: "fallback",
+          options: { blocks: blocksPath, scheduleIn: "30m" },
+        }),
+      ).rejects.toThrow(/non-empty rich_text blocks/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+
+    expect(calls.some((call) => call.method === "drafts.create")).toBe(false);
+  });
+
+  test("--schedule routes Enterprise Grid browser auth through the organization", async () => {
+    const { ctx, calls } = createEnterpriseGridContext();
+
+    const result = await sendMessage({
+      ctx,
+      targetInput: "C12345678",
+      text: "later",
+      options: { scheduleIn: "1h" },
+    });
+
+    expect(calls).toEqual([
+      { client: "workspace", method: "auth.test" },
+      { client: "workspace", method: "team.info" },
+      { client: "enterprise", method: "auth.test" },
+      { client: "enterprise", method: "drafts.create" },
+    ]);
+    expect(result.scheduled_message_id).toBe("DrGrid1234");
+  });
+
   test("--schedule-in computes a relative post_at", async () => {
     const calls: { method: string; params: Record<string, unknown> }[] = [];
     const ctx = createContext(calls);
@@ -1417,6 +1618,75 @@ describe("scheduled message management", () => {
     });
   });
 
+  test("lists Slack-native scheduled drafts with browser auth and reports truncation", async () => {
+    const calls: { method: string; params: Record<string, unknown> }[] = [];
+    const ctx = createContext(calls, { authType: "browser", draftsHasMore: true });
+
+    const result = await listScheduledMessages({
+      ctx,
+      options: { channel: "C12345678", oldest: "1770160000", limit: "25" },
+    });
+
+    expect(calls.map((call) => call.method)).toEqual(["auth.test", "team.info", "drafts.list"]);
+    expect(calls[2]?.params).toEqual({ is_active: true, limit: 100 });
+    expect(result).toEqual({
+      ok: true,
+      scheduled_messages: [
+        {
+          id: "Dr1234ABCD",
+          channel_id: "C12345678",
+          post_at: 1770168709,
+          text: "scheduled",
+        },
+      ],
+      has_more: true,
+    });
+  });
+
+  test("lists all Slack-native scheduled drafts when no limit is passed", async () => {
+    const calls: { method: string; params: Record<string, unknown> }[] = [];
+    const ctx = createContext(calls, "browser");
+
+    const result = await listScheduledMessages({ ctx, options: {} });
+
+    expect(result.scheduled_messages).toHaveLength(1);
+  });
+
+  test("fails closed when native receipt reconciliation is truncated", async () => {
+    const client = {
+      api: async () => ({
+        ok: true,
+        drafts: [
+          {
+            id: "Dr1234ABCD",
+            date_scheduled: 1770168709,
+            destinations: [{ channel_id: "C12345678" }],
+            blocks: [
+              {
+                type: "rich_text",
+                elements: [
+                  {
+                    type: "rich_text_section",
+                    elements: [{ type: "text", text: "scheduled" }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        has_more: true,
+      }),
+    };
+
+    await expect(
+      findScheduledMessageReceiptIdentity(client as never, {
+        channelId: "C12345678",
+        scheduledMessageId: "Dr1234ABCD",
+        authType: "browser",
+      }),
+    ).rejects.toThrow(/incomplete.*100/i);
+  });
+
   test("cancels scheduled messages with the required channel id", async () => {
     const calls: { method: string; params: Record<string, unknown> }[] = [];
     const ctx = createContext(calls);
@@ -1437,6 +1707,33 @@ describe("scheduled message management", () => {
       ok: true,
       channel_id: "C12345678",
       scheduled_message_id: "Q1234ABCD",
+    });
+  });
+
+  test("cancels a Slack-native scheduled draft with browser auth", async () => {
+    const calls: { method: string; params: Record<string, unknown> }[] = [];
+    const ctx = createContext(calls, "browser");
+
+    const result = await cancelScheduledMessage({
+      ctx,
+      scheduledMessageId: "Dr1234ABCD",
+      options: { channel: "C12345678" },
+    });
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "auth.test",
+      "team.info",
+      "drafts.list",
+      "drafts.delete",
+    ]);
+    expect(calls[3]?.params).toEqual({
+      draft_id: "Dr1234ABCD",
+      client_last_updated_ts: "1770165109.6283790",
+    });
+    expect(result).toEqual({
+      ok: true,
+      channel_id: "C12345678",
+      scheduled_message_id: "Dr1234ABCD",
     });
   });
 

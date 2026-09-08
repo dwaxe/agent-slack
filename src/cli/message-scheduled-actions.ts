@@ -9,6 +9,7 @@ import {
   normalizeScheduleLimit,
 } from "../slack/scheduled-messages.ts";
 import { resolveAuthenticatedMutationWorkspace } from "./mutation-receipt.ts";
+import { resolveSlackNativeDraftEndpoint } from "./slack-native-draft-endpoint.ts";
 
 export async function listScheduledMessages(input: {
   ctx: CliContext;
@@ -38,16 +39,23 @@ export async function listScheduledMessages(input: {
   return await input.ctx.withAutoRefresh({
     workspaceUrl,
     work: async () => {
-      const { client } = await input.ctx.getClientForWorkspace(workspaceUrl);
+      const { client, auth, workspace_url } = await input.ctx.getClientForWorkspace(workspaceUrl);
       const channelId = channelTarget
         ? await resolveScheduledChannelTarget(client, channelTarget)
         : undefined;
-      return await listScheduledMessagesApi(client, {
+      const endpoint = await resolveSlackNativeDraftEndpoint({
+        ctx: input.ctx,
+        client,
+        auth,
+        workspaceUrl: workspace_url ?? workspaceUrl,
+      });
+      return await listScheduledMessagesApi(endpoint.client, {
         channelId,
         cursor: input.options.cursor,
         oldest: input.options.oldest,
         latest: input.options.latest,
         limit: normalizeScheduleLimit(input.options.limit),
+        authType: endpoint.auth.auth_type,
       });
     },
   });
@@ -74,7 +82,7 @@ export async function cancelScheduledMessage(input: {
     workspaceUrl,
     work: async () => {
       const reconciliationStartedAt = input.ctx.removeScheduledSendReceipt ? new Date() : undefined;
-      const { client, workspace_url } = await input.ctx.getClientForWorkspace(workspaceUrl);
+      const { client, auth, workspace_url } = await input.ctx.getClientForWorkspace(workspaceUrl);
       let exactWorkspaceUrl =
         workspace_url ??
         (channelTarget.kind === "url" ? channelTarget.ref.workspace_url : workspaceUrl);
@@ -86,11 +94,18 @@ export async function cancelScheduledMessage(input: {
         exactWorkspaceUrl = await resolveAuthenticatedMutationWorkspace(client, exactWorkspaceUrl);
       }
       const channelId = await resolveScheduledChannelTarget(client, channelTarget);
+      const endpoint = await resolveSlackNativeDraftEndpoint({
+        ctx: input.ctx,
+        client,
+        auth,
+        workspaceUrl: workspace_url ?? workspaceUrl,
+      });
       if (input.ctx.removeScheduledSendReceipt) {
         try {
-          scheduledIdentity = await findScheduledMessageReceiptIdentity(client, {
+          scheduledIdentity = await findScheduledMessageReceiptIdentity(endpoint.client, {
             channelId,
             scheduledMessageId: input.scheduledMessageId,
+            authType: endpoint.auth.auth_type,
           });
           reconciliationLookupFailed =
             scheduledIdentity === undefined || scheduledIdentity.unique === false;
@@ -101,9 +116,10 @@ export async function cancelScheduledMessage(input: {
           );
         }
       }
-      await cancelScheduledMessageApi(client, {
+      await cancelScheduledMessageApi(endpoint.client, {
         channelId,
         scheduledMessageId: input.scheduledMessageId,
+        authType: endpoint.auth.auth_type,
       });
       const receiptCleanup: Record<string, unknown> = {};
       if (input.ctx.removeScheduledSendReceipt) {

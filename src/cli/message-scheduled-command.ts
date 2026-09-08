@@ -17,7 +17,10 @@ export function registerScheduledMessageCommand(input: {
     .option("--channel <channel>", "Limit to a channel/DM id or channel name")
     .option("--oldest <ts>", "Only messages scheduled after this Unix timestamp")
     .option("--latest <ts>", "Only messages scheduled before this Unix timestamp")
-    .option("--cursor <cursor>", "Fetch the next page from chat.scheduledMessages.list")
+    .option(
+      "--cursor <cursor>",
+      "Fetch the next chat.scheduledMessages.list page (standard-token auth only)",
+    )
     .option("--limit <n>", "Max scheduled messages to return")
     .action(
       async (options: {

@@ -62,7 +62,7 @@ body or attachments. It implies strict complete-result validation, emits exact
 hydrating messages or downloading files. It is global-search only and cannot be combined
 with `--channel`, non-`any` content-type filtering, or user-resolution options.
 
-For scheduled writes, prefer `--schedule` with an ISO 8601 timestamp and explicit offset when timezone matters. Named `--schedule-in` phrases use the executing environment's local timezone; confirm that it matches the user's intent.
+For scheduled writes, prefer `--schedule` with an ISO 8601 timestamp and explicit offset when timezone matters. Named `--schedule-in` phrases use the executing environment's local timezone; confirm that it matches the user's intent. Scheduling always uses Slack's native server-side feature: standard-token auth uses `chat.scheduleMessage`, while browser-style auth creates a Slack-native scheduled draft and automatically routes Enterprise Grid calls through verified organization credentials. Browser-auth schedules accept only non-empty top-level `rich_text` blocks. Returned IDs begin with `Q` or `Dr`, respectively; pass either to `message scheduled cancel`. Native scheduled-draft listings may include `has_more: true`; Slack exposes no cursor for the remaining records.
 
 Named `later remind --in` values such as `tomorrow` or `monday` also use the executing environment's local timezone at 9:00. Confirm that timezone or pass an explicit Unix timestamp.
 
