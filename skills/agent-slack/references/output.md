@@ -1,78 +1,138 @@
-# JSON output and downloads
+# JSON output + downloads (reference)
+
+## Output format
 
 Slack data commands print JSON to stdout. Help, update, and some authentication setup commands print text instead.
 
 - Empty values are pruned (`null`, `[]`, `{}` are removed where possible).
 - `auth whoami` redacts secrets in its output.
 
-`message get` returns one message and an optional thread summary. `message list` returns chronological messages; in thread mode this includes the root and all replies.
+## Message shapes (high-level)
 
-`message export-own` returns a schema-versioned, chronological window of the authenticated user's top-level text in public/private channels. Each message has Markdown `content`, raw `content_sha256`, and `canonical_content_sha256`. The canonical hash normalizes Slack URL autolinking, entities, mention labels, and standard emoji rewrites consistently with mutation receipts. `oldest` and `latest` are exact inclusive Slack timestamps. It excludes DMs/group DMs, verifies the author ID and workspace origin, deduplicates by `channel_id` + `ts`, and does not hydrate messages or files. Reject `complete: false`; it means the bounded search pagination cap was reached.
+- `message get` returns:
+  - `message: { ... }`
+  - `thread?: { ts, length }` (summary only; present when threaded)
+  - `referenced_users?: { [user_id]: { id, name?, real_name?, display_name?, ... } }`
 
-`message receipts list` returns schema-versioned local mutation provenance for an exact inclusive `oldest`/`latest` window with `tracking_started_at`, `unresolved_intent_count`, `incomplete_reasons`, and raw/canonical content hashes, never message plaintext. `complete` requires coverage of the pre-window 120-day scheduling horizon, no in-window unresolved write-ahead intent, and a canonical hash for each timestamp-less receipt. Use `(channel_id, ts)` first; only when `ts` is absent, use `(channel_id, canonical_content_sha256)` as the fallback identity.
+- `message list` returns:
+  - `messages: [ ... ]` (chronological; the root plus all replies in thread mode)
+  - `referenced_users?: { [user_id]: { id, name?, real_name?, display_name?, ... } }`
+  - Messages are compact and omit redundant fields on each item where possible.
 
-`message list --include-mention-metadata` adds
-`mention_evidence: { schema: 2, complete: boolean, user_ids: [...], usergroup_ids: [...] }`
-to every listed message. Both ID arrays remain present when empty. Evidence covers only
-direct mentions from mrkdwn-enabled top-level text, known semantic blocks, and explicitly
-mrkdwn-enabled fields in normal legacy attachments. It excludes quoted, code, plain-text,
-forwarded, and unfurled lookalikes. Unknown or unsupported message surfaces set
-`complete: false`; mutation workflows must reject incomplete or unrecognized schemas.
-Without the flag, this field is omitted. In thread mode, the command also emits exact
-top-level `thread_complete: true` only after validating all cursor pages, message
-timestamps, the requested root, and any reported root reply count; it fails without partial output if completeness cannot
-be proven. Thread-driven mutations must require that exact field plus complete schema 2
-evidence on every message. Channel-history mode never emits `thread_complete` because it
-returns a bounded window rather than a complete collection.
+Compact readers preserve valid user-group and broadcast rich-text elements. Read `mentions.md` before constructing a live notification.
 
-`message list --metadata-only` emits exact top-level `metadata_only: true`, implies
-mention evidence, and returns only `ts`, validated `author`, and `mention_evidence` for
-each message. It scans raw mention-bearing surfaces before omitting content, skips file
-enrichment and downloads, and still emits `thread_complete: true` only for a proven full
-thread. It is incompatible with reaction inclusion and user-resolution options.
+`message export-own` returns a schema-versioned, chronological window of the authenticated user's top-level text in public/private channels. Each message has Markdown `content`, an exact raw-text `content_sha256`, and a `canonical_content_sha256` that normalizes Slack URL autolinking, entities, mention labels, and standard emoji rewrites consistently with mutation receipts. `oldest` and `latest` are exact inclusive Slack timestamps. It excludes DMs/group DMs, verifies the author ID and workspace origin, deduplicates by `channel_id` + `ts`, and does not hydrate messages or files. Reject `complete: false`; it means the bounded search pagination cap was reached.
 
-`search messages --require-complete-results` produces no partial result when Slack
-returns a malformed or unresolvable match, lacks an exact matching permalink, or when a
-matching message cannot be fetched.
-It also requires coherent `page`, `pages`, and `total` pagination metadata and refuses
-short result pages before `min(total, limit)` matches are collected. The option applies
-only to global search and cannot be combined with `--channel`.
+`message receipts list` returns schema-versioned local mutation provenance for an exact inclusive `oldest`/`latest` window with `tracking_started_at`, `unresolved_intent_count`, `incomplete_reasons`, and raw plus canonical content hashes, never message plaintext. `complete` requires coverage of the pre-window 120-day scheduling horizon, no in-window unresolved write-ahead intent, and a canonical hash for every timestamp-less receipt. Use `(channel_id, ts)` to exclude immediate sends/edits; use channel plus `canonical_content_sha256` only as a fallback when `ts` is absent.
 
-`search messages --metadata-only` emits exact top-level `metadata_only: true` and returns
-only validated `channel_id`, `ts`, and `permalink` fields. It implies strict complete
-results and does not hydrate messages, render content, enrich files, or download files.
-It cannot be combined with channel fallback, content-type filtering, or user resolution.
+- An immediate, non-attachment `message send` returns:
+  - `ok: true`
+  - `channel_id: "C..." | "D..."`
+  - `ts?: "<seconds>.<micros>"` — the posted message's ts
+  - `thread_ts?: "<seconds>.<micros>"` — present only when the send was into an existing thread
+  - `permalink?: "https://.../archives/..."` — present when `ts` is known and a workspace URL was resolvable
 
-Immediate non-attachment sends return `ts` and usually a `permalink`. Attachment sends return `ts` when Slack supplies share metadata; scheduled sends return `scheduled_message_id` and `post_at` instead. Standard-token scheduled IDs begin with `Q`; Slack Desktop/browser-auth scheduled draft IDs begin with `Dr`. Both are managed through `message scheduled list|cancel`. Native scheduled-draft listings may include `has_more: true`; Slack exposes no cursor for the remaining records.
+Attachment sends return `channel_id`, and now also return `ts`/`thread_ts` when Slack supplies share metadata; do not assume an attachment send has a permalink. Scheduled sends return `scheduled_message_id` (`Q...` for standard tokens or `Dr...` for browser auth) and `post_at` instead of `ts`/`permalink`, plus `thread_ts` when applicable.
 
-## Thread subscription mutations
+- `message scheduled list` returns `scheduled_messages: [ ... ]`, optional `next_cursor` for standard-token pagination, and optional `has_more: true` when a browser-auth native-draft result may be incomplete.
+- `message scheduled cancel` returns `channel_id` and `scheduled_message_id`; local provenance-cleanup fields can also appear.
+- `message draft list` returns `drafts: [ ... ]` and `count`. Create/update returns `draft`; delete returns `draft_id`. Draft destinations include channel/thread/broadcast metadata where present.
+- `thread unsubscribe` returns `status: "unsubscribed"` after a verified change or `status: "already_unsubscribed"` after an idempotent no-op, plus canonical workspace/channel/thread metadata and the root permalink. Both success states report `subscribed: false`.
+- `canvas create` returns `canvas: { id, title?, channel_id? }`. `canvas get` returns `canvas: { id, title?, markdown }`.
 
-`thread unsubscribe` returns `status: "unsubscribed"` after a verified change or
-`status: "already_unsubscribed"` after an idempotent no-op, plus the verified `user_id`,
-canonical `workspace_url`, `channel_id`, `thread_ts`, and root `permalink`. Both successful
-states report exact `subscribed: false`; require these verified output fields before
-treating the mutation as successful.
+Message payload fields keep canonical user IDs (for example `author.user_id`, reaction `users[]`, and `@U...` mentions in rendered content). `referenced_users` provides display metadata for those IDs. The cache is tied to the active workspace credentials and has a 24-hour per-entry TTL. This behavior is opt-in and requires passing `--resolve-users` (or `--refresh-users` to replace cached entries before resolving). Never use cached profile fields to choose a mention or write target.
 
-`canvas create` returns `canvas: { id, title?, channel_id? }`. `canvas get` returns `canvas: { id, title?, markdown }`.
-`canvas edit` returns `ok: true` and `canvas: { id, operation }` after Slack accepts the change.
+Exact-ID `user get` reuses the same cache. Pass `--refresh` to replace that entry or `--no-cache` to avoid reading or writing the cache.
 
-Message payloads keep canonical user IDs. Pass `--resolve-users` to add display metadata under `referenced_users`, or `--refresh-users` to refresh the 24-hour credential-scoped cache before resolving. Exact-ID `user get` reuses that cache; pass `--refresh` to replace one entry or `--no-cache` to bypass persistence. Never use cached profile fields to choose a mention or write target.
+- `user resolve <identities...>` performs live, uncached direct ID/email lookups and reports `safe_to_mention`; it emits `<@U...>` fields only when the entire active-human batch is safe. Otherwise it exits nonzero and emits no live mention token.
 
-`user resolve` scans every returned workspace-directory page before finalizing exact active-human matches. Its output includes directory completeness and `safe_to_mention`. Live mention fields appear only when every requested identity resolves uniquely; otherwise the command exits nonzero and emits no live mention token. Incomplete evidence omits definitive per-input results.
+- `usergroup resolve <groups...>` checks one complete `usergroups.list` snapshot. It emits live `<!subteam^S...>` fields only when every exact ID/handle resolves uniquely to an active group. Missing, ambiguous, inactive, malformed, incomplete, or request-failed batches exit nonzero with no live mention token. `usergroup get` returns one exact active or inactive group without a mention field.
 
-`usergroup resolve` checks one complete `usergroups.list` snapshot and resolves exact active IDs or handles. Live `<!subteam^S…>` fields appear only when every requested group resolves uniquely; inactive, missing, ambiguous, malformed, or request-failed batches exit nonzero and contain no live mention token. `usergroup get` returns one exact active or inactive group without a mention field.
+Use `--max-body-chars` to cap message bodies for token budget control.
 
-Use `--max-body-chars`, `--max-content-chars`, `--limit`, or a command's counts-only mode to keep results within the task's needs.
+## Later shape (high-level)
 
-## Downloaded files
+- `later list` returns:
+  - `counts: { in_progress, archived, completed, total }`
+  - `items: [{ channel_id, channel_name, ts, state, date_saved, message? }]`
+  - `message` includes `author`, `content`, `thread_ts`, `reply_count`
+  - Items sorted by most recently saved first
+  - With `--counts-only`, `items` is omitted
 
-Message reads and searches download Slack files locally by default. Each successful file includes an absolute `path` plus available metadata such as `name`, `mimetype`, and `mode`.
+- `later complete/archive/reopen/save/remove` returns `{ ok: true }`
+- `later remind` returns `{ ok: true, remind_at }`
+
+## Unreads shape (high-level)
+
+- `unreads` returns:
+  - `channels: [{ channel_id, channel_name, channel_type, unread_count, mention_count, messages? }]`
+  - `threads?: { has_unreads, mention_count }` (present when there are unread thread replies)
+  - `channel_type` is one of: `"channel"`, `"dm"`, `"mpim"`, `"group"`
+  - Channels sorted by mention count (desc), then unread count (desc)
+  - System messages (joins, leaves, topic changes) are excluded by default; use `--include-system` to include them
+  - With `--counts-only`, `messages` is omitted
+
+## Search shapes (high-level)
+
+- `search messages|all` returns `messages: [ ... ]`
+- `search messages|all` may include `referenced_users?: { [user_id]: { id, name?, real_name?, display_name?, ... } }`
+- `search files|all` returns `files: [ ... ]`
+
+Use `--max-content-chars` (messages) and `--limit` to control size.
+
+## Channel shapes (high-level)
+
+- `channel list` returns:
+  - `channels: [ ... ]`
+  - `next_cursor?: string` (present when more pages are available)
+
+- `channel new` returns:
+  - `channel: { id, name, is_private }`
+
+- `channel invite` returns:
+  - Internal invite mode:
+    - `channel_id`
+    - `invited_user_ids: [ ... ]`
+    - `already_in_channel_user_ids?: [ ... ]`
+    - `unresolved_users?: [ ... ]`
+  - External invite mode (`--external`):
+    - `channel_id`
+    - `external: true`
+    - `external_limited: boolean`
+    - `invited_emails: [ ... ]`
+    - `already_invited_emails?: [ ... ]`
+    - `invalid_external_targets?: [ ... ]`
+
+- `channel mark` returns:
+  - `ok: boolean`
+  - `channel: string` (resolved channel ID)
+  - `ts: string`
+
+## File fields in compact messages
+
+When messages include file attachments, each file object contains:
+
+- `name` — the original filename (e.g. `"report.pdf"`), omitted if unavailable
+- `mimetype` — MIME type (e.g. `"application/pdf"`)
+- `mode` — Slack file mode (e.g. `"hosted"`, `"snippet"`)
+- `path` — absolute local path to the downloaded file
+
+Files with a recorded download result are included: successful entries have a local `path`; failed entries keep metadata plus `error` and a `.download-error.txt` path as described below.
+
+## Attachment downloads
+
+Attachments are downloaded to an agent-friendly temp directory.
 
 - Successful downloads are returned as absolute paths in output.
-- `message list --no-download` never downloads attachment bodies. Channel-history and full-thread results retain available file `name`, `mimetype`, and `mode` metadata without `path` or `error`.
-- `message get` preserves failed downloads in `message.files[]`; `message list` uses `messages[].files[]`. Each failed entry has `error` and a `path` to a local `.download-error.txt` file.
+- `message get` preserves failed attachment downloads in `message.files[]`; `message list` uses `messages[].files[]`. Each failed entry has `error` and a `path` to a local `.download-error.txt` file.
 - Message results from `search messages|all` preserve failed attachment downloads with `messages[].files[].error` and keep `messages[].files[].path` pointing to a local `.download-error.txt` file.
-- `search files` warns and skips files whose download fails. Do not treat a skip warning as proof that no matching file exists; retry through the source message with `message get/list` when possible.
-- For download-then-reply workflows, use `search messages --content-type file`: `search files` results include local paths but no source-message permalink or thread target.
+- `search files` warns and skips files whose download fails while continuing with remaining matches. A skip warning is not proof that no matching file exists; retry through its source message with `message get/list` when possible.
+- For download-then-reply workflows, prefer `search messages --content-type file`: `search files` results have local paths but no source-message permalink or thread target.
 
-Downloads use `$XDG_RUNTIME_DIR/agent-slack/tmp/downloads/` when `XDG_RUNTIME_DIR` is set; otherwise they use `~/.agent-slack/tmp/downloads/`.
+Default download root:
+
+- `~/.agent-slack/tmp/downloads/`
+
+If `XDG_RUNTIME_DIR` is set, downloads live under:
+
+- `$XDG_RUNTIME_DIR/agent-slack/tmp/downloads/`

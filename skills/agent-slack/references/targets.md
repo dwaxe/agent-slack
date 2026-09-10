@@ -1,27 +1,37 @@
-# Target selection
+# Slack targets
 
-Prefer a Slack message URL whenever one is available:
+Prefer an exact message permalink:
 
 ```text
 https://<workspace>.slack.com/archives/<channel_id>/p<digits>[?thread_ts=...]
 ```
 
-A URL supplies the workspace, channel, and message timestamp. With a URL target:
+It supplies the workspace, channel, and message timestamp. With a permalink:
 
-- `message get`, `edit`, `delete`, and `react` operate on that message.
-- `message list` returns the thread root and all replies.
-- `message send` replies in that message's thread. `message compose` and `message draft create` do the same unless `--thread-ts` explicitly overrides the URL-derived thread.
-- `channel mark` marks through that message timestamp; `--ts` explicitly overrides the timestamp. It rejects `--workspace` because the URL supplies it.
-- `thread unsubscribe` derives the thread root from the URL and accepts no non-URL target.
+- `message get`, `message edit`, `message delete`, and reactions operate on that exact message.
+- `message list` returns the thread root plus replies.
+- `message send`, `message compose`, and `message draft create` reply in that message's thread; explicit `--thread-ts` overrides URL-derived thread context for compose/drafts.
+- `channel mark` marks through the URL timestamp; explicit `--ts` overrides it, and `--workspace` is rejected because the URL already supplies the workspace.
+- `thread unsubscribe` derives the thread root and accepts only an exact HTTPS Slack message URL.
 
-Use a channel name or a `C...`, `G...`, or `D...` channel ID only when no URL is available:
+Without a permalink:
 
-- `message get`, `edit`, `delete`, and `react` require `--ts`.
-- `message list` reads channel history unless `--thread-ts` or `--ts` selects a thread.
-- `channel mark` requires `--ts`.
+| Target                                 | Rule                                                                                                                                      |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Channel name, such as `general`        | Pass `--workspace <full-url-or-unique-substring>` when multiple workspaces are configured.                                                |
+| Channel ID (`C...`, `G...`, or `D...`) | Pass `--workspace` when multiple workspaces are configured.                                                                               |
+| Point operation by channel             | Pass `--ts <seconds>.<micros>`.                                                                                                           |
+| Full thread by channel                 | Pass `--thread-ts <root-ts>`, or `--ts <message-ts>` to resolve its thread.                                                               |
+| User ID (`U...` or `W...`)             | `message send` and `message draft create` open/reuse a one-to-one DM. `message draft update --channel` can re-address a draft to that DM. |
 
-Among `message` subcommands, `message send` and `message draft create` accept a `U...` or `W...` user ID as a target; it opens or reuses that user's direct-message channel. `message draft update --channel` can likewise re-address a draft to a DM. Treat `U`- and `W`-prefixed user IDs equivalently.
+Examples:
 
-Use `user dm-open <users...>` with one to eight other user IDs or handles to get a DM or group-DM channel ID, then use that channel ID for message operations. The authenticated caller is implicit.
+```bash
+agent-slack message get "general" --ts "1770165109.628379" --workspace "myteam"
+agent-slack message list "general" --thread-ts "1770165109.000001" --workspace "myteam"
+agent-slack message edit "general" "updated text" --ts "1770165109.628379" --workspace "myteam"
+```
 
-Non-URL targets do not carry workspace identity. When multiple workspaces are configured, use the intended configured default or pass `--workspace <url-or-unique-substring>`/`SLACK_WORKSPACE_URL`, including for channel, user, canvas, and workflow IDs.
+Use `user dm-open <users...>` for one to eight other users to obtain a DM/group-DM channel ID, then use that channel ID for other message operations. The authenticated caller is implicit.
+
+`SLACK_WORKSPACE_URL` accepts the same workspace selector. Non-URL channel, user, canvas, and workflow IDs do not carry workspace identity; use the intended default or pass `--workspace`. For command-specific exceptions, use installed `--help`.

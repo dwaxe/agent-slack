@@ -1,89 +1,66 @@
 ---
 name: agent-slack
-description: "Slack CLI for agents: read URLs/threads/history/unreads/later/canvases/workflows, create/edit canvases from Markdown, search messages/files, download attachments, lookup users, resolve verified human and user-group mentions, list/create/invite channels, open DMs, compose messages, manage Slack-native drafts and thread subscriptions, schedule sends, and explicit sends/edits/deletes/reactions/mark-read/uploads."
+description: Use for any Slack request or Slack URL, including reads, searches, drafts, files, reactions, and other Slack changes. Route all Slack access through agent-slack.
 ---
 
 # agent-slack
 
-Use `agent-slack` from `$PATH`. If it is missing, install it with:
+Use `agent-slack` only for Slack API access. Before the first API call, run
+`agent-slack auth whoami`; if it is unavailable or unauthenticated, stop and
+ask the user to reauthenticate. Pure wording based entirely on user-provided
+context needs no Slack call.
+
+## Core Contract
+
+- Read and search freely. “Answer,” “reply,” or “respond” authorizes
+  investigation and a draft, never posting.
+- Every Slack state change requires an explicit request, including sends,
+  uploads, edits, deletes, reactions, compose/draft/schedule actions, channel or
+  DM changes, Later, canvases, thread subscriptions, and workflows. Workflow
+  runs may execute downstream actions.
+- Before a human-facing send or edit, show the exact workspace, target, action,
+  and final payload and obtain approval. Any target or payload change invalidates
+  that approval. Treat `message compose` as a send.
+- Pin one workspace and prefer exact permalinks. Never combine message, search,
+  channel, or identity evidence across workspaces or broaden DM/private evidence
+  without authorization.
+- Never scan the user directory to resolve a mention. Resolve each complete
+  intended batch directly in one workspace: people by canonical ID or email,
+  and user groups separately by exact ID or handle. Use returned mentions only
+  when the whole batch is safe.
+- With `AGENT_SLACK_SAFE_MODE=1` or `--safe-mode`, sends use the draft editor,
+  CI compose is blocked, and edits and deletes are blocked.
+- Do not mutate Jira, code review, CI, rollout, or another linked system unless
+  separately requested.
+- Before a write, check `agent-slack --version` and that command's installed
+  `--help`. Afterward, verify the returned state as described in the relevant
+  reference.
+- Scheduling uses Slack's server-side feature: standard tokens call
+  `chat.scheduleMessage`, while browser auth creates a native scheduled draft.
+  Browser-auth schedules accept only non-empty top-level `rich_text` blocks.
+
+## Quick Read
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/stablyai/agent-slack/main/install.sh | sh
+agent-slack message get "$SLACK_URL" --resolve-users
+agent-slack message list "$SLACK_URL" --resolve-users
 ```
 
-Fallback: `npm i -g agent-slack` (Node >= 22.13).
+The first command identifies the focal message; the second returns its thread.
 
-Run `agent-slack --help` or the relevant subcommand help before guessing a command or flag.
-If a capability named here is absent from installed help, report version skew instead of guessing. Do not self-update the CLI without explicit authorization.
+## Load Only What the Task Needs
 
-## Safety
+- [references/thread-investigation.md](references/thread-investigation.md):
+  thread meaning, claim verification, action advice, or reply drafting
+- [references/message-formatting.md](references/message-formatting.md): links,
+  lists, rich text, attachments, Block Kit, edits, and write verification
+- [references/mentions.md](references/mentions.md): any person or user-group
+  notification
+- [references/commands.md](references/commands.md): authentication recovery,
+  unfamiliar flags, and non-message features; skip for routine get/list
+- [references/targets.md](references/targets.md): channel/timestamp targeting or
+  multi-workspace ambiguity
+- [references/output.md](references/output.md): exact JSON fields, receipts,
+  scheduled/draft/canvas/thread results, caches, and downloads when unclear
 
-- Read and search freely.
-- Perform write actions only when explicitly requested: sends, edits, deletes, reactions, invitations, channel or canvas creation/editing, mark-read operations, thread unsubscriptions, scheduling or canceling delivery, uploads, Later state/reminder changes, DM/group-DM creation, and `workflow run`. Workflow runs can execute downstream actions.
-- Before constructing live mentions from identities, resolve the entire intended batch in one workspace: use `user resolve` for people and `usergroup resolve` for groups. Keep those batches separate. Use returned mentions only when `safe_to_mention` is true; a nonzero, ambiguous, inactive, missing, or incomplete result is unsafe.
-- For compose- or review-only requests, return proposed text without invoking Slack, or use `message draft create` to add a Slack-native draft the user can review and send (nothing is posted). `message compose` is send-capable; use it only when the user explicitly asks to open the interactive editor. In CI or another noninteractive environment, do not invoke it without separate authorization to send immediately: CI skips the editor and sends supplied text.
-- With `AGENT_SLACK_SAFE_MODE=1` (or the global `--safe-mode` flag) set, safe mode is enforced at the tool level: `message send` is redirected to the draft editor, the CI `message compose` direct-send shortcut is blocked, and `message edit`/`message delete` are blocked. Use it when nothing should post without human review.
-
-## Workflow
-
-1. Run `agent-slack auth whoami`. If needed, import credentials with `auth import-desktop`, `auth import-brave`, `auth import-chrome`, or `auth import-firefox`, then run `auth test`.
-2. Prefer a Slack message URL when one is available. It carries the workspace, channel, and timestamp needed by most message operations.
-3. Choose the narrowest read operation: `message get` for one message, `message list` for a full thread or channel history, and `search messages` or `search files` for discovery.
-4. Use output limits such as `--limit`, `--max-body-chars`, and `--max-content-chars` to avoid unnecessary context. For metadata-only channel or thread scans, use `message list --no-download`; file metadata remains available without local paths.
-5. For a requested write, execute only the requested mutation and verify the resulting JSON metadata.
-
-For a local writing-style corpus, use `message export-own --workspace <url> --oldest <exact-ts> --latest <exact-ts>`, then anti-join its messages with `message receipts list --workspace <url> --oldest <exact-ts> --latest <exact-ts>`. The export is text-only, excludes DMs/group DMs, and does not hydrate messages or download files; check `complete` before consuming it.
-
-When automation needs canonical direct-notification targets, use
-`message list --include-mention-metadata`. Each listed message then has schema 2
-`mention_evidence` with a `complete` boolean. Mutation workflows must require the exact
-known schema and `complete: true`; evidence excludes quoted, code, plain-text, and
-forwarded-body lookalikes. In thread mode, also require the exact top-level
-`thread_complete: true`; the command emits it only after validating every page and the
-thread root, including any reported root reply count, and fails without partial output
-otherwise. Channel-history mode does not
-emit `thread_complete`.
-
-For a content-free automation boundary, use `message list --metadata-only`. It implies
-mention metadata and emits exact `metadata_only: true`, preserves only `ts`, `author`, and
-`mention_evidence` per message, and skips rendering, file enrichment, and downloads. A
-thread result still requires exact `thread_complete: true` before mutation automation.
-Do not combine it with reaction inclusion or user-resolution options.
-
-For mutation automation driven by global message search, pass
-`search messages --require-complete-results`. It fails the command instead of silently
-skipping malformed, unresolvable, unfetchable, or non-canonical permalink matches, and
-validates the reported pagination before proving the result boundary. It is incompatible
-with the `--channel` history fallback.
-
-Use `search messages --metadata-only` when discovery should expose refs but no message
-body or attachments. It implies strict complete-result validation, emits exact
-`metadata_only: true`, and returns only `channel_id`, `ts`, and `permalink` without
-hydrating messages or downloading files. It is global-search only and cannot be combined
-with `--channel`, non-`any` content-type filtering, or user-resolution options.
-
-For scheduled writes, prefer `--schedule` with an ISO 8601 timestamp and explicit offset when timezone matters. Named `--schedule-in` phrases use the executing environment's local timezone; confirm that it matches the user's intent. Scheduling always uses Slack's native server-side feature: standard-token auth uses `chat.scheduleMessage`, while browser-style auth creates a Slack-native scheduled draft and automatically routes Enterprise Grid calls through verified organization credentials. Browser-auth schedules accept only non-empty top-level `rich_text` blocks. Returned IDs begin with `Q` or `Dr`, respectively; pass either to `message scheduled cancel`. Native scheduled-draft listings may include `has_more: true`; Slack exposes no cursor for the remaining records.
-
-Named `later remind --in` values such as `tomorrow` or `monday` also use the executing environment's local timezone at 9:00. Confirm that timezone or pass an explicit Unix timestamp.
-
-Use `--no-unfurl` with `message send` or `message compose` when the user wants Slack link and media previews suppressed. It cannot be combined with `message send --attach`.
-
-Ordinary `message send` and `message edit` calls auto-convert lists. `message send --blocks` and `message edit --blocks` use supplied Block Kit blocks, while `message send --attach` sends its initial comment without automatic list conversion. Inside auto-converted lists, use Slack's `<URL|label>` syntax because CommonMark `[label](URL)` links are not converted into labeled link elements.
-
-Slack-native drafts (`message draft list|create|update|delete`) manage drafts that appear in the user's Slack client; `create` posts nothing. `create` and `update` accept repeatable `--attach <path>`; on `update` the files are added to the draft's existing attachments rather than replacing them. They use undocumented session endpoints and require browser-style auth (xoxc/xoxd).
-
-`canvas edit` uses Slack's public `canvases.edit` API and applies exactly one operation per call. The
-default `replace` operation replaces the whole canvas; section-targeted inserts/replacements and
-deletes require the section ID returned by Slack's Canvas tooling, while `rename` takes `--title`.
-Content operations take exactly one `--file` or `--markdown` source. It requires a standard token
-with `canvases:write`; imported browser credentials can create standalone canvases but cannot edit.
-
-`thread unsubscribe --expected-user-id <U...|W...> <message-url>` stops following one exact thread. It requires an exact HTTPS Slack message URL and browser-style auth, verifies the authenticated actor and target workspace before subscription access, uses an undocumented session endpoint, and verifies the resulting subscription state.
-
-## Conditional references
-
-- Read [references/commands.md](references/commands.md) for unfamiliar commands or flags,
-  including metadata-only reads and thread-subscription mutations.
-- Read [references/thread-investigation.md](references/thread-investigation.md) only when interpreting a Slack thread, verifying its claims, advising an action from it, or preparing a reply to that thread.
-- Read [references/targets.md](references/targets.md) only when choosing between a message URL, channel, or user target, or when resolving multiple workspaces.
-- Read [references/output.md](references/output.md) only when handling returned message, canvas, or thread-subscription metadata, resolved users, or downloaded and failed attachments.
+Do not load every reference merely because a command returns JSON.
