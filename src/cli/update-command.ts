@@ -29,7 +29,11 @@ export function registerUpdateCommand(input: { program: Command }): void {
         if (!result.update_available) {
           console.log(
             JSON.stringify(
-              pruneEmpty({ ...result, install_method: method, status: "up_to_date" }),
+              pruneEmpty({
+                ...result,
+                install_method: method,
+                status: result.self_update_disabled ? "self_update_disabled" : "up_to_date",
+              }),
               null,
               2,
             ),

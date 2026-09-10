@@ -40,6 +40,10 @@ export function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+export function isUpstreamSelfUpdateDisabled(version: string): boolean {
+  return version.includes("-dwaxe.");
+}
+
 /**
  * Fetch the latest release version from GitHub.
  * Returns null on any network/API error (never throws).
@@ -71,8 +75,20 @@ export async function checkForUpdate(force = false): Promise<{
   current: string;
   latest: string;
   update_available: boolean;
+  self_update_disabled?: true;
 } | null> {
   const current = getPackageVersion();
+
+  // Personal fork builds must never replace themselves with an upstream
+  // release. Upgrade them deliberately from a tested dwaxe/agent-slack build.
+  if (isUpstreamSelfUpdateDisabled(current)) {
+    return {
+      current,
+      latest: current,
+      update_available: false,
+      self_update_disabled: true,
+    };
+  }
 
   if (!force) {
     const cached = await readJsonFile<UpdateCheckCache>(getCachePath());

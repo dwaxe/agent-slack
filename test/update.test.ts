@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { compareSemver } from "../src/lib/update.ts";
+import { compareSemver, isUpstreamSelfUpdateDisabled } from "../src/lib/update.ts";
 
 describe("compareSemver", () => {
   test("equal versions return 0", () => {
@@ -30,5 +30,16 @@ describe("compareSemver", () => {
     expect(compareSemver("0.2.10", "0.2.9")).toBeGreaterThan(0);
     expect(compareSemver("0.2.10", "0.2.10")).toBe(0);
     expect(compareSemver("0.2.10", "0.3.0")).toBeLessThan(0);
+  });
+});
+
+describe("isUpstreamSelfUpdateDisabled", () => {
+  test("protects dwaxe fork builds from upstream replacement", () => {
+    expect(isUpstreamSelfUpdateDisabled("0.10.2-dwaxe.14")).toBe(true);
+  });
+
+  test("leaves upstream and unrelated prerelease builds updateable", () => {
+    expect(isUpstreamSelfUpdateDisabled("0.10.2")).toBe(false);
+    expect(isUpstreamSelfUpdateDisabled("0.10.3-rc.1")).toBe(false);
   });
 });
