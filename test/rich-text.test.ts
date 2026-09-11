@@ -94,6 +94,12 @@ describe("parseInlineElements", () => {
     ]);
   });
 
+  test("backslashes before closing backtick runs stay inside code spans", () => {
+    expect(parseInlineElements("`[link](https://e.test)\\`")).toEqual([
+      { type: "text", text: "[link](https://e.test)\\", style: { code: true } },
+    ]);
+  });
+
   test("Markdown links support uppercase schemes and nested labels", () => {
     expect(parseInlineElements("[A \\] [nested]](HTTPS://E.TEST)")).toEqual([
       { type: "link", url: "https://E.TEST", text: "A ] [nested]" },
@@ -144,6 +150,16 @@ describe("parseInlineElements", () => {
     expect(parseInlineElements("Ping <!subteam^S12345678|@team>")).toEqual([
       { type: "text", text: "Ping " },
       { type: "usergroup", usergroup_id: "S12345678" },
+    ]);
+  });
+
+  test("lowercase Slack entity IDs remain literal text", () => {
+    expect(parseInlineElements("<@u123456a> <#c12345678> <!subteam^s12345678|@team>")).toEqual([
+      { type: "text", text: "<@u123456a>" },
+      { type: "text", text: " " },
+      { type: "text", text: "<#c12345678>" },
+      { type: "text", text: " " },
+      { type: "text", text: "<!subteam^s12345678|@team>" },
     ]);
   });
 });
@@ -342,6 +358,16 @@ describe("textToRichTextBlocks", () => {
     };
     expect(list.elements[0]!.elements).toEqual([
       { type: "text", text: "foo ` [link](https://e.test)", style: { code: true } },
+    ]);
+  });
+
+  test("backslashes before code-span closers do not activate links in list items", () => {
+    const result = textToRichTextBlocks("- `[link](https://e.test)\\`")!;
+    const list = result[0]!.elements.find((e) => e.type === "rich_text_list") as {
+      elements: { elements: unknown[] }[];
+    };
+    expect(list.elements[0]!.elements).toEqual([
+      { type: "text", text: "[link](https://e.test)\\", style: { code: true } },
     ]);
   });
 

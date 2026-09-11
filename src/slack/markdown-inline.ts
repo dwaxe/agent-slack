@@ -298,26 +298,28 @@ function buildCodeDelimiterIndex(text: string, escaped: Uint8Array): Map<number,
     while (text[cursor] === "`") {
       cursor++;
     }
-    const start = escaped[rawStart] === 1 ? rawStart + 1 : rawStart;
-    if (start < cursor) {
-      runs.push({ start, end: cursor });
-    }
+    runs.push({ start: rawStart, end: cursor });
   }
 
   const codeDelimiters = new Map<number, CodeDelimiter>();
   const nextRunByLength = new Map<number, { start: number; end: number }>();
   for (let idx = runs.length - 1; idx >= 0; idx--) {
     const run = runs[idx]!;
-    const length = run.end - run.start;
-    const closer = nextRunByLength.get(length);
-    if (closer) {
-      codeDelimiters.set(run.start, {
+    // Outside a code span, a backslash escapes the first backtick in a run,
+    // so only the remainder can open a span. Inside a span, backslashes are
+    // literal: the complete raw run remains eligible to close an earlier
+    // opener.
+    const openerStart = escaped[run.start] === 1 ? run.start + 1 : run.start;
+    const openerLength = run.end - openerStart;
+    const closer = nextRunByLength.get(openerLength);
+    if (openerLength > 0 && closer) {
+      codeDelimiters.set(openerStart, {
         openerEnd: run.end,
         closerStart: closer.start,
         end: closer.end,
       });
     }
-    nextRunByLength.set(length, run);
+    nextRunByLength.set(run.end - run.start, run);
   }
 
   return codeDelimiters;
