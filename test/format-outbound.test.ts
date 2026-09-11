@@ -85,6 +85,23 @@ describe("formatOutboundSlackText", () => {
     expect(formatOutboundSlackText(input)).toBe(input);
   });
 
+  test("treats backtick runs preceded by a backslash as code-span closers", () => {
+    const input = "``[link](https://e.test)\\``";
+    expect(formatOutboundSlackText(input)).toBe(input);
+  });
+
+  test("matches protected URL schemes case-insensitively without accepting lowercase entity IDs", () => {
+    expect(formatOutboundSlackText("<HTTPS://E.TEST|Example> <MAILTO:x@e.test|Email>")).toBe(
+      "<HTTPS://E.TEST|Example> <MAILTO:x@e.test|Email>",
+    );
+    expect(formatOutboundSlackText("<@u123456a> <#c12345678> <!subteam^s12345678|@team>")).toBe(
+      "&lt;@u123456a&gt; &lt;#c12345678&gt; &lt;!subteam^s12345678|@team&gt;",
+    );
+    expect(formatOutboundSlackText("<@U123456a> <#C123456a> <!subteam^S123456a|@team>")).toBe(
+      "&lt;@U123456a&gt; &lt;#C123456a&gt; &lt;!subteam^S123456a|@team&gt;",
+    );
+  });
+
   test("handles bracket-heavy malformed input without repeated suffix scans", () => {
     const input = "[".repeat(40_000);
     const startedAt = performance.now();

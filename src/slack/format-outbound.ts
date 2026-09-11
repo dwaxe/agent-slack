@@ -26,7 +26,7 @@ export function formatOutboundSlackText(text: string): string {
   // Protect already-formatted Slack tokens so `<`/`>` inside them aren't escaped.
   const stash: string[] = [];
   out = out.replace(
-    /<(?:@[UWB][A-Z0-9]+(?:\|[^>]*)?|#[CG][A-Z0-9]+(?:\|[^>]*)?|!subteam\^[A-Z0-9]+(?:\|[^>]*)?|![a-zA-Z]+(?:\|[^>]*)?|(?:https?:\/\/|mailto:)[^>]+)>/gi,
+    /<(?:@[UWB][A-Z0-9]+(?:\|[^>]*)?|#[CG][A-Z0-9]+(?:\|[^>]*)?|!subteam\^[A-Z0-9]+(?:\|[^>]*)?|![a-zA-Z]+(?:\|[^>]*)?|(?:[Hh][Tt][Tt][Pp][Ss]?:\/\/|[Mm][Aa][Ii][Ll][Tt][Oo]:)[^>]+)>/g,
     (m) => {
       stash.push(m);
       return `\u0000${stash.length - 1}\u0000`;

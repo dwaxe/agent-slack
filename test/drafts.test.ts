@@ -111,6 +111,27 @@ describe("draftTextToBlocks", () => {
     ]);
   });
 
+  test("keeps links inside code spans whose closers follow a backslash", () => {
+    expect(draftTextToBlocks("`[link](https://e.test)\\`")).toEqual([
+      {
+        type: "rich_text",
+        elements: [
+          {
+            type: "rich_text_section",
+            elements: [
+              {
+                type: "text",
+                text: "[link](https://e.test)\\",
+                style: { code: true },
+              },
+              { type: "text", text: "\n" },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
   test("does not expose protected markers in Slack link labels", () => {
     expect(draftTextToBlocks("<https://e.test|`code`>")).toEqual([
       {
