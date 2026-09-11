@@ -42,12 +42,13 @@ const BLOCKQUOTE_RE = /^> (.*)$/;
 /**
  * Parse mrkdwn inline formatting into Slack rich_text inline elements.
  *
- * Handles: *bold*, _italic_, ~strike~, `code`, :emoji:, <url|label>, <url>
+ * Handles: *bold*, _italic_, ~strike~, `code`, :emoji:, <url|label>, <url>,
+ * and [label](url).
  */
 export function parseInlineElements(text: string): InlineElement[] {
   const elements: InlineElement[] = [];
   const re =
-    /`([^`]+)`|(?:^|(?<=[^A-Za-z0-9_])):([a-zA-Z0-9_+-]+):(?![A-Za-z0-9_+-])|\*([^*]+)\*|_([^_]+)_|~([^~]+)~|<@([UWB][A-Z0-9]+)(?:\|[^>]*)?>|<#([CG][A-Z0-9]+)(?:\|[^>]*)?>|<!subteam\^([A-Z0-9]+)(?:\|[^>]*)?>|<!(here|channel|everyone)(?:\|[^>]*)?>|<([^>|]+)\|([^>]+)>|<([^>|]+)>|(?:^|(?<=[^A-Za-z0-9_]))@([UWB][A-Z0-9]{6,})\b|(?:^|(?<=[^A-Za-z0-9_]))@(here|channel|everyone)\b/g;
+    /`([^`]+)`|(?:^|(?<=[^A-Za-z0-9_])):([a-zA-Z0-9_+-]+):(?![A-Za-z0-9_+-])|\*([^*]+)\*|_([^_]+)_|~([^~]+)~|<@([UWB][A-Z0-9]+)(?:\|[^>]*)?>|<#([CG][A-Z0-9]+)(?:\|[^>]*)?>|<!subteam\^([A-Z0-9]+)(?:\|[^>]*)?>|<!(here|channel|everyone)(?:\|[^>]*)?>|(?<![!\\])\[([^\]\n]+)\]\(((?:https?:\/\/|mailto:)(?:[^()\s]|\([^()\s]*\))+?)\)|<([^>|]+)\|([^>]+)>|<([^>|]+)>|(?:^|(?<=[^A-Za-z0-9_]))@([UWB][A-Z0-9]{6,})\b|(?:^|(?<=[^A-Za-z0-9_]))@(here|channel|everyone)\b/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -73,6 +74,8 @@ export function parseInlineElements(text: string): InlineElement[] {
       channelToken,
       usergroupToken,
       broadcastToken,
+      markdownLinkText,
+      markdownLinkUrl,
       linkUrl,
       linkText,
       bareUrl,
@@ -99,6 +102,12 @@ export function parseInlineElements(text: string): InlineElement[] {
       elements.push({
         type: "broadcast",
         range: broadcastToken as "here" | "channel" | "everyone",
+      });
+    } else if (markdownLinkText != null && markdownLinkUrl != null) {
+      elements.push({
+        type: "link",
+        url: markdownLinkUrl.replace(/\\([\\[\]()])/g, "$1"),
+        text: markdownLinkText.replace(/\\([\\[\]()])/g, "$1"),
       });
     } else if (linkUrl != null && linkText != null && isSlackManualLinkUrl(linkUrl)) {
       elements.push({ type: "link", url: linkUrl, text: linkText });

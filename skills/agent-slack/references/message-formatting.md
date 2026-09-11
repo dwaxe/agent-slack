@@ -1,6 +1,6 @@
 # Format Slack messages
 
-- Use Slack mrkdwn links: `<https://example.com|label>`. Use this form inside lists; `[label](URL)` and bare list URLs render unreliably.
+- Labeled links may use Markdown (`[label](https://example.com)`) or Slack mrkdwn (`<https://example.com|label>`); `message send` and `message edit` normalize both, including links in lists.
 - Ordinary `message send` and `message edit` convert common bullet and numbered lists to Slack-native rich text. Within generated rich-text blocks, `:emoji:` shortcodes, `<@U...>` people, `<#C...>` channels, `<!subteam^S...>` user groups, `<!here>`/`<!channel>`/`<!everyone>`, inline styles, code, quotes, and Slack manual links become native elements.
 - `message send --blocks <path>` and `message edit --blocks <path>` use the supplied Block Kit array instead of automatic conversion. The positional text remains the fallback for notifications and unfurls. Send-side `--blocks` cannot be combined with `--attach`.
 - `message send --attach` sends the first file's initial comment as plain text without automatic list conversion. Attachments cannot be scheduled or combined with `--reply-broadcast`.

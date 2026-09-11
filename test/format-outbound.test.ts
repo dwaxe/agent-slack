@@ -44,6 +44,28 @@ describe("formatOutboundSlackText", () => {
     );
   });
 
+  test("converts inline Markdown links to Slack links", () => {
+    expect(
+      formatOutboundSlackText(
+        "[MX-55362](https://meraki.atlassian.net/browse/MX-55362) | [PR #23229](https://github.com/net-plat-eng/dashboard-server/pull/23229)",
+      ),
+    ).toBe(
+      "<https://meraki.atlassian.net/browse/MX-55362|MX-55362> | <https://github.com/net-plat-eng/dashboard-server/pull/23229|PR #23229>",
+    );
+  });
+
+  test("preserves Markdown-like text in code, images, and escaped links", () => {
+    const input =
+      "`[code](https://example.com/code)` ![image](https://example.com/image.png) \\[escaped](https://example.com/escaped)";
+    expect(formatOutboundSlackText(input)).toBe(input);
+  });
+
+  test("handles parenthesized link destinations and safely escapes labels", () => {
+    expect(formatOutboundSlackText("[A & <B>](https://example.com/wiki/Foo_(bar)?x=1&y=2)")).toBe(
+      "<https://example.com/wiki/Foo_(bar)?x=1&y=2|A &amp; &lt;B&gt;>",
+    );
+  });
+
   test("does not promote email-like or mid-word @", () => {
     expect(formatOutboundSlackText("mail me at user@Udomain.com")).toBe(
       "mail me at user@Udomain.com",
