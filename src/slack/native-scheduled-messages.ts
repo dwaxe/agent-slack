@@ -27,13 +27,22 @@ export async function scheduleNativeMessage(
     broadcast: input.replyBroadcast,
     dateScheduled: input.postAt,
   });
-  if (!draft) {
-    throw new Error("Slack did not return the native scheduled draft it created.");
+  const destination = draft?.destinations[0];
+  if (
+    !draft ||
+    draft.date_scheduled !== input.postAt ||
+    draft.destinations.length !== 1 ||
+    !destination ||
+    destination.channel_id !== input.channelId ||
+    destination.thread_ts !== input.threadTs ||
+    Boolean(destination.broadcast) !== Boolean(input.threadTs && input.replyBroadcast)
+  ) {
+    throw new Error("Slack did not confirm a matching native scheduled draft.");
   }
   return {
-    channel: draft.destinations[0]?.channel_id ?? input.channelId,
+    channel: destination.channel_id,
     scheduled_message_id: draft.id,
-    post_at: draft.date_scheduled ?? input.postAt,
+    post_at: draft.date_scheduled,
   };
 }
 

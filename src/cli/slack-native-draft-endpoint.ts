@@ -72,9 +72,19 @@ export async function resolveSlackNativeDraftEndpoint(input: {
     throw new Error("Slack did not return a valid Enterprise Grid domain for native drafts.");
   }
   const enterpriseWorkspaceUrl = `https://${enterpriseDomain}.enterprise.slack.com`;
-  const enterprise = await input.ctx.getClientForWorkspace(enterpriseWorkspaceUrl);
-  if (enterprise.auth.auth_type !== "browser") {
-    throw new Error("Enterprise Grid native drafts require browser auth for the organization.");
+  let enterprise: Awaited<ReturnType<CliContext["getClientForWorkspace"]>>;
+  try {
+    enterprise = await input.ctx.getClientForWorkspace(enterpriseWorkspaceUrl, {
+      excludeAuth: input.auth,
+    });
+  } catch (error) {
+    throw missingOrganizationCredentialsError(enterpriseWorkspaceUrl, error);
+  }
+  if (
+    enterprise.auth.auth_type !== "browser" ||
+    enterprise.auth.xoxc_token === input.auth.xoxc_token
+  ) {
+    throw missingOrganizationCredentialsError(enterpriseWorkspaceUrl);
   }
   const enterpriseIdentity = await enterprise.client.api("auth.test", {});
   if (getString(enterpriseIdentity.team_id)?.trim() !== enterpriseId) {
@@ -92,6 +102,13 @@ export async function resolveSlackNativeDraftEndpoint(input: {
     auth: enterprise.auth,
     workspaceUrl: enterprise.workspace_url ?? enterpriseWorkspaceUrl,
   };
+}
+
+function missingOrganizationCredentialsError(workspaceUrl: string, cause?: unknown): Error {
+  return new Error(
+    `Enterprise Grid native drafts require separate organization browser credentials for ${workspaceUrl}. Import or configure that organization workspace before scheduling, listing, or cancelling native schedules.`,
+    { cause },
+  );
 }
 
 function isEnterpriseWorkspaceUrl(workspaceUrl: string | undefined): boolean {
