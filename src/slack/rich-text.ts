@@ -1,4 +1,8 @@
-import { parseCodeSpanAt, parseMarkdownLinkAt } from "./markdown-inline.ts";
+import {
+  protectMarkdownInline,
+  restoreProtectedMarkdownLiterals,
+  type ProtectedMarkdownInline,
+} from "./markdown-inline.ts";
 
 type InlineStyle = { bold?: true; italic?: true; strike?: true; code?: true };
 
@@ -48,58 +52,13 @@ const BLOCKQUOTE_RE = /^> (.*)$/;
  * and [label](url).
  */
 export function parseInlineElements(text: string): InlineElement[] {
-  const protectedInline = protectInlineCodeAndLinks(text);
+  const protectedInline = protectMarkdownInline(text);
   return parseProtectedInlineElements(protectedInline.text, protectedInline);
-}
-
-type ProtectedInlineToken =
-  | { type: "code"; content: string }
-  | { type: "link"; label: string; url: string };
-
-type ProtectedInlineContext = {
-  text: string;
-  tokens: ProtectedInlineToken[];
-  marker: string;
-  suffix: string;
-};
-
-function protectInlineCodeAndLinks(text: string): ProtectedInlineContext {
-  let marker = "\uE000";
-  while (text.includes(marker)) {
-    marker += "\uE000";
-  }
-  const suffix = "\uE001";
-  const tokens: ProtectedInlineToken[] = [];
-  let protectedText = "";
-  let cursor = 0;
-
-  while (cursor < text.length) {
-    const codeSpan = parseCodeSpanAt(text, cursor);
-    if (codeSpan) {
-      tokens.push({ type: "code", content: codeSpan.content });
-      protectedText += `${marker}${tokens.length - 1}${suffix}`;
-      cursor = codeSpan.end;
-      continue;
-    }
-
-    const link = parseMarkdownLinkAt(text, cursor);
-    if (link) {
-      tokens.push({ type: "link", label: link.label, url: link.url });
-      protectedText += `${marker}${tokens.length - 1}${suffix}`;
-      cursor = link.end;
-      continue;
-    }
-
-    protectedText += text[cursor];
-    cursor++;
-  }
-
-  return { text: protectedText, tokens, marker, suffix };
 }
 
 function parseProtectedInlineElements(
   text: string,
-  context: ProtectedInlineContext,
+  context: ProtectedMarkdownInline,
 ): InlineElement[] {
   const { tokens, marker, suffix } = context;
   const elements: InlineElement[] = [];
@@ -185,13 +144,26 @@ function parseProtectedInlineElements(
         range: broadcastToken as "here" | "channel" | "everyone",
       });
     } else if (linkUrl != null && linkText != null && isSlackManualLinkUrl(linkUrl)) {
-      elements.push({ type: "link", url: linkUrl, text: linkText });
+      elements.push({
+        type: "link",
+        url: restoreProtectedMarkdownLiterals(linkUrl, context),
+        text: restoreProtectedMarkdownLiterals(linkText, context),
+      });
     } else if (linkUrl != null && linkText != null) {
-      elements.push({ type: "text", text: `<${linkUrl}|${linkText}>` });
+      elements.push({
+        type: "text",
+        text: `<${restoreProtectedMarkdownLiterals(linkUrl, context)}|${restoreProtectedMarkdownLiterals(linkText, context)}>`,
+      });
     } else if (bareUrl != null && isSlackManualLinkUrl(bareUrl)) {
-      elements.push({ type: "link", url: bareUrl });
+      elements.push({
+        type: "link",
+        url: restoreProtectedMarkdownLiterals(bareUrl, context),
+      });
     } else if (bareUrl != null) {
-      elements.push({ type: "text", text: `<${bareUrl}>` });
+      elements.push({
+        type: "text",
+        text: `<${restoreProtectedMarkdownLiterals(bareUrl, context)}>`,
+      });
     } else if (bareUserId != null) {
       elements.push({ type: "user", user_id: bareUserId });
     } else if (bareBroadcast != null) {
