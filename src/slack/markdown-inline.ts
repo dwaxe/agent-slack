@@ -9,86 +9,118 @@ type ParsedMarkdownLink = {
   end: number;
 };
 
-export function parseCodeSpanAt(text: string, start: number): ParsedCodeSpan | null {
-  if (text[start] !== "`" || isEscaped(text, start)) {
-    return null;
-  }
+type CodeDelimiter = {
+  openerEnd: number;
+  closerStart: number;
+  end: number;
+};
 
-  const openerLength = countBacktickRun(text, start);
-  const contentStart = start + openerLength;
-  let cursor = contentStart;
+type DelimiterIndex = {
+  codeDelimiters: Map<number, CodeDelimiter>;
+  squareBracketEnds: Map<number, number>;
+  parenthesisEnds: Map<number, number>;
+  angleBracketEnds: Map<number, number>;
+  escaped: Uint8Array;
+};
 
-  while (cursor < text.length) {
-    if (text[cursor] !== "`") {
-      cursor++;
-      continue;
-    }
+type ParserContext = {
+  text: string;
+  index: DelimiterIndex;
+};
 
-    const closerLength = countBacktickRun(text, cursor);
-    if (closerLength === openerLength) {
-      return {
-        content: text.slice(contentStart, cursor),
-        end: cursor + closerLength,
-      };
-    }
-    cursor += closerLength;
-  }
+export type MarkdownInlineParser = {
+  codeSpanAt: (start: number) => ParsedCodeSpan | null;
+  markdownLinkAt: (start: number) => ParsedMarkdownLink | null;
+};
 
-  return null;
-}
+export type ProtectedMarkdownInlineToken =
+  | { type: "code"; content: string; raw: string }
+  | { type: "link"; label: string; url: string; raw: string };
 
-export function parseMarkdownLinkAt(text: string, start: number): ParsedMarkdownLink | null {
-  if (
-    text[start] !== "[" ||
-    isEscaped(text, start) ||
-    (text[start - 1] === "!" && !isEscaped(text, start - 1))
-  ) {
-    return null;
-  }
+export type ProtectedMarkdownInline = {
+  text: string;
+  tokens: ProtectedMarkdownInlineToken[];
+  marker: string;
+  suffix: string;
+};
 
-  const labelEnd = findBalancedEnd({
-    text,
-    start: start + 1,
-    open: "[",
-    close: "]",
-    rejectWhitespace: false,
-  });
-  if (labelEnd == null || text[labelEnd + 1] !== "(") {
-    return null;
-  }
-
-  const destinationStart = labelEnd + 2;
-  const destination = parseLinkDestination(text, destinationStart);
-  if (!destination) {
-    return null;
-  }
-
-  const rawUrl = unescapeMarkdownPunctuation(destination.value);
-  const scheme = /^(https?|mailto):/i.exec(rawUrl);
-  if (!scheme) {
-    return null;
-  }
-
+export function createMarkdownInlineParser(text: string): MarkdownInlineParser {
+  const context = { text, index: buildDelimiterIndex(text) };
   return {
-    label: unescapeMarkdownPunctuation(text.slice(start + 1, labelEnd)),
-    url: `${scheme[1]!.toLowerCase()}:${rawUrl.slice(scheme[0].length)}`,
-    end: destination.end,
+    codeSpanAt: (start) => parseCodeSpanAt(context, start),
+    markdownLinkAt: (start) => parseMarkdownLinkAt(context, start),
   };
 }
 
+export function protectMarkdownInline(text: string): ProtectedMarkdownInline {
+  const parser = createMarkdownInlineParser(text);
+  let marker = "\uE000";
+  while (text.includes(marker)) {
+    marker += "\uE000";
+  }
+  const suffix = "\uE001";
+  const tokens: ProtectedMarkdownInlineToken[] = [];
+  let protectedText = "";
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    const codeSpan = parser.codeSpanAt(cursor);
+    if (codeSpan) {
+      tokens.push({
+        type: "code",
+        content: codeSpan.content,
+        raw: text.slice(cursor, codeSpan.end),
+      });
+      protectedText += `${marker}${tokens.length - 1}${suffix}`;
+      cursor = codeSpan.end;
+      continue;
+    }
+
+    const link = parser.markdownLinkAt(cursor);
+    if (link) {
+      tokens.push({
+        type: "link",
+        label: link.label,
+        url: link.url,
+        raw: text.slice(cursor, link.end),
+      });
+      protectedText += `${marker}${tokens.length - 1}${suffix}`;
+      cursor = link.end;
+      continue;
+    }
+
+    protectedText += text[cursor];
+    cursor++;
+  }
+
+  return { text: protectedText, tokens, marker, suffix };
+}
+
+export function restoreProtectedMarkdownLiterals(
+  text: string,
+  context: ProtectedMarkdownInline,
+): string {
+  const { marker, suffix, tokens } = context;
+  const tokenPattern = new RegExp(`${escapeRegExp(marker)}(\\d+)${escapeRegExp(suffix)}`, "g");
+  return text.replace(tokenPattern, (match, tokenIndex) => {
+    return tokens[Number(tokenIndex)]?.raw ?? match;
+  });
+}
+
 export function markdownLinksToSlackMrkdwn(text: string): string {
+  const parser = createMarkdownInlineParser(text);
   let output = "";
   let cursor = 0;
 
   while (cursor < text.length) {
-    const codeSpan = parseCodeSpanAt(text, cursor);
+    const codeSpan = parser.codeSpanAt(cursor);
     if (codeSpan) {
       output += text.slice(cursor, codeSpan.end);
       cursor = codeSpan.end;
       continue;
     }
 
-    const link = parseMarkdownLinkAt(text, cursor);
+    const link = parser.markdownLinkAt(cursor);
     if (link) {
       const label = link.label.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const url = link.url.replace(/\|/g, "%7C").replace(/</g, "%3C").replace(/>/g, "%3E");
@@ -104,90 +136,191 @@ export function markdownLinksToSlackMrkdwn(text: string): string {
   return output;
 }
 
-function parseLinkDestination(text: string, start: number): { value: string; end: number } | null {
-  if (text[start] === "<") {
-    let cursor = start + 1;
-    while (cursor < text.length) {
-      const char = text[cursor]!;
-      if (char === "\\" && cursor + 1 < text.length) {
-        cursor += 2;
-        continue;
-      }
-      if (char === ">") {
-        if (text[cursor + 1] !== ")") {
-          return null;
-        }
-        return { value: text.slice(start + 1, cursor), end: cursor + 2 };
-      }
-      if (char === "<" || /\s/.test(char)) {
-        return null;
-      }
-      cursor++;
-    }
+function parseCodeSpanAt(context: ParserContext, start: number): ParsedCodeSpan | null {
+  const { text, index } = context;
+  const delimiter = index.codeDelimiters.get(start);
+  if (!delimiter) {
     return null;
   }
-
-  const end = findBalancedEnd({
-    text,
-    start,
-    open: "(",
-    close: ")",
-    rejectWhitespace: true,
-  });
-  if (end == null || end === start) {
-    return null;
-  }
-  return { value: text.slice(start, end), end: end + 1 };
+  return {
+    content: text.slice(delimiter.openerEnd, delimiter.closerStart),
+    end: delimiter.end,
+  };
 }
 
-function findBalancedEnd(input: {
-  text: string;
-  start: number;
-  open: string;
-  close: string;
-  rejectWhitespace: boolean;
-}): number | null {
-  const { text, start, open, close, rejectWhitespace } = input;
-  let depth = 1;
-  let cursor = start;
+function parseMarkdownLinkAt(context: ParserContext, start: number): ParsedMarkdownLink | null {
+  const { text, index } = context;
+  if (
+    text[start] !== "[" ||
+    index.escaped[start] === 1 ||
+    (text[start - 1] === "!" && index.escaped[start - 1] !== 1)
+  ) {
+    return null;
+  }
 
-  while (cursor < text.length) {
-    const char = text[cursor]!;
-    if (char === "\\" && cursor + 1 < text.length) {
-      cursor += 2;
-      continue;
-    }
-    if (char === "\n" || (rejectWhitespace && /\s/.test(char))) {
+  const labelEnd = index.squareBracketEnds.get(start);
+  if (labelEnd == null || text[labelEnd + 1] !== "(") {
+    return null;
+  }
+
+  const destination = parseLinkDestination(context, labelEnd + 1);
+  if (!destination) {
+    return null;
+  }
+
+  const rawUrl = unescapeMarkdownPunctuation(destination.value);
+  const scheme = /^(https?|mailto):/i.exec(rawUrl)!;
+  return {
+    label: unescapeMarkdownPunctuation(text.slice(start + 1, labelEnd)),
+    url: `${scheme[1]!.toLowerCase()}:${rawUrl.slice(scheme[0].length)}`,
+    end: destination.end,
+  };
+}
+
+function parseLinkDestination(
+  context: ParserContext,
+  openingParenthesis: number,
+): { value: string; end: number } | null {
+  const { text, index } = context;
+  const start = openingParenthesis + 1;
+  let valueStart = start;
+  let valueEnd: number | undefined;
+  let end: number;
+
+  if (text[start] === "<") {
+    valueStart++;
+    valueEnd = index.angleBracketEnds.get(start);
+    if (valueEnd == null || text[valueEnd + 1] !== ")") {
       return null;
     }
-    if (char === open) {
-      depth++;
-    } else if (char === close) {
-      depth--;
-      if (depth === 0) {
-        return cursor;
+    end = valueEnd + 2;
+  } else {
+    valueEnd = index.parenthesisEnds.get(openingParenthesis);
+    if (valueEnd == null || valueEnd === start) {
+      return null;
+    }
+    end = valueEnd + 1;
+  }
+
+  const value = text.slice(valueStart, valueEnd);
+  if (!isSupportedLinkDestination(value)) {
+    return null;
+  }
+  return { value, end };
+}
+
+function isSupportedLinkDestination(value: string): boolean {
+  return /^(?:https?:\/\/.+|mailto:.+)/i.test(value);
+}
+
+function buildDelimiterIndex(text: string): DelimiterIndex {
+  const squareBracketEnds = new Map<number, number>();
+  const parenthesisEnds = new Map<number, number>();
+  const angleBracketEnds = new Map<number, number>();
+  const escaped = new Uint8Array(text.length);
+  const squareStack: number[] = [];
+  const parenthesisStack: number[] = [];
+  let openAngleBracket: number | undefined;
+  let precedingBackslashes = 0;
+
+  for (let cursor = 0; cursor < text.length; cursor++) {
+    const char = text[cursor]!;
+    if (char === "\\") {
+      precedingBackslashes++;
+      continue;
+    }
+
+    const isEscaped = precedingBackslashes % 2 === 1;
+    precedingBackslashes = 0;
+    if (isEscaped) {
+      escaped[cursor] = 1;
+    }
+
+    if (char === "\n") {
+      squareStack.length = 0;
+      parenthesisStack.length = 0;
+      openAngleBracket = undefined;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      parenthesisStack.length = 0;
+      openAngleBracket = undefined;
+    }
+    if (isEscaped) {
+      continue;
+    }
+
+    if (char === "[") {
+      squareStack.push(cursor);
+    } else if (char === "]") {
+      const start = squareStack.pop();
+      if (start != null) {
+        squareBracketEnds.set(start, cursor);
       }
     }
-    cursor++;
+
+    if (char === "(") {
+      parenthesisStack.push(cursor);
+    } else if (char === ")") {
+      const start = parenthesisStack.pop();
+      if (start != null) {
+        parenthesisEnds.set(start, cursor);
+      }
+    }
+
+    if (char === "<") {
+      openAngleBracket = cursor;
+    } else if (char === ">" && openAngleBracket != null) {
+      angleBracketEnds.set(openAngleBracket, cursor);
+      openAngleBracket = undefined;
+    }
   }
 
-  return null;
+  return {
+    codeDelimiters: buildCodeDelimiterIndex(text, escaped),
+    squareBracketEnds,
+    parenthesisEnds,
+    angleBracketEnds,
+    escaped,
+  };
 }
 
-function countBacktickRun(text: string, start: number): number {
-  let cursor = start;
-  while (text[cursor] === "`") {
-    cursor++;
-  }
-  return cursor - start;
-}
+function buildCodeDelimiterIndex(text: string, escaped: Uint8Array): Map<number, CodeDelimiter> {
+  const runs: { start: number; end: number }[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    if (text[cursor] !== "`") {
+      cursor++;
+      continue;
+    }
 
-function isEscaped(text: string, index: number): boolean {
-  let slashCount = 0;
-  for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor--) {
-    slashCount++;
+    const rawStart = cursor;
+    while (text[cursor] === "`") {
+      cursor++;
+    }
+    const start = escaped[rawStart] === 1 ? rawStart + 1 : rawStart;
+    if (start < cursor) {
+      runs.push({ start, end: cursor });
+    }
   }
-  return slashCount % 2 === 1;
+
+  const codeDelimiters = new Map<number, CodeDelimiter>();
+  const nextRunByLength = new Map<number, { start: number; end: number }>();
+  for (let idx = runs.length - 1; idx >= 0; idx--) {
+    const run = runs[idx]!;
+    const length = run.end - run.start;
+    const closer = nextRunByLength.get(length);
+    if (closer) {
+      codeDelimiters.set(run.start, {
+        openerEnd: run.end,
+        closerStart: closer.start,
+        end: closer.end,
+      });
+    }
+    nextRunByLength.set(length, run);
+  }
+
+  return codeDelimiters;
 }
 
 function unescapeMarkdownPunctuation(value: string): string {
@@ -216,4 +349,8 @@ function isAsciiPunctuation(char: string): boolean {
     (code >= 0x5b && code <= 0x60) ||
     (code >= 0x7b && code <= 0x7e)
   );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

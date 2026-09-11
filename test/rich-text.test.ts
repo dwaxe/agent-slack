@@ -100,6 +100,12 @@ describe("parseInlineElements", () => {
     ]);
   });
 
+  test("Slack link labels do not expose protected inline markers", () => {
+    expect(parseInlineElements("<https://e.test|`code`>")).toEqual([
+      { type: "link", url: "https://e.test", text: "`code`" },
+    ]);
+  });
+
   test("non-url angle bracket text is preserved as text", () => {
     expect(parseInlineElements("Use <fix>")).toEqual([
       { type: "text", text: "Use " },
@@ -330,6 +336,16 @@ describe("textToRichTextBlocks", () => {
     };
     expect(list.elements[0]!.elements).toEqual([
       { type: "text", text: "foo ` [link](https://e.test)", style: { code: true } },
+    ]);
+  });
+
+  test("Slack link labels in list items do not expose protected inline markers", () => {
+    const result = textToRichTextBlocks("- <https://e.test|`code`>")!;
+    const list = result[0]!.elements.find((e) => e.type === "rich_text_list") as {
+      elements: { elements: unknown[] }[];
+    };
+    expect(list.elements[0]!.elements).toEqual([
+      { type: "link", url: "https://e.test", text: "`code`" },
     ]);
   });
 

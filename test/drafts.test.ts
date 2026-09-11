@@ -110,6 +110,23 @@ describe("draftTextToBlocks", () => {
       },
     ]);
   });
+
+  test("does not expose protected markers in Slack link labels", () => {
+    expect(draftTextToBlocks("<https://e.test|`code`>")).toEqual([
+      {
+        type: "rich_text",
+        elements: [
+          {
+            type: "rich_text_section",
+            elements: [
+              { type: "link", url: "https://e.test", text: "`code`" },
+              { type: "text", text: "\n" },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
 });
 
 describe("parseDraftRecord", () => {

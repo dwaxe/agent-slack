@@ -81,6 +81,13 @@ describe("formatOutboundSlackText", () => {
     expect(formatOutboundSlackText(input)).toBe(input);
   });
 
+  test("handles bracket-heavy malformed input without repeated suffix scans", () => {
+    const input = "[".repeat(40_000);
+    const startedAt = performance.now();
+    expect(formatOutboundSlackText(input)).toBe(input);
+    expect(performance.now() - startedAt).toBeLessThan(500);
+  });
+
   test("does not promote email-like or mid-word @", () => {
     expect(formatOutboundSlackText("mail me at user@Udomain.com")).toBe(
       "mail me at user@Udomain.com",
