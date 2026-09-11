@@ -176,6 +176,7 @@ export async function searchMessagesInChannelsFallback(
 
   channelLoop: for (const channelId of channelIds) {
     let cursor: string | undefined;
+    const seenCursors = new Set<string>();
     for (;;) {
       const resp = await client.api("conversations.history", {
         channel: channelId,
@@ -183,10 +184,6 @@ export async function searchMessagesInChannelsFallback(
         cursor,
       });
       const messages = isRecord(resp) ? asArray(resp.messages).filter(isRecord) : [];
-      if (messages.length === 0) {
-        break;
-      }
-
       const responseMetadata = isRecord(resp.response_metadata) ? resp.response_metadata : null;
       const nextCursor = responseMetadata
         ? getString(responseMetadata.next_cursor)?.trim() || undefined
@@ -240,9 +237,10 @@ export async function searchMessagesInChannelsFallback(
         }
       }
 
-      if (reachedAfterBoundary || !nextCursor || nextCursor === cursor) {
+      if (reachedAfterBoundary || !nextCursor || seenCursors.has(nextCursor)) {
         break;
       }
+      seenCursors.add(nextCursor);
       cursor = nextCursor;
     }
   }
