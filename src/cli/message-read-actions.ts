@@ -221,7 +221,11 @@ export async function handleMessageList(input: {
         const rootTs = metadataOnly
           ? (ref.thread_ts_hint ?? ref.message_ts)
           : await (async () => {
-              const msg = await fetchMessage(client, { ref, includeReactions });
+              const msg = await fetchMessage(client, {
+                ref,
+                includeReactions,
+                fetchFileInfo: download,
+              });
               return msg.thread_ts ?? msg.ts;
             })();
         const threadMessages = await fetchThread(client, {
@@ -231,6 +235,7 @@ export async function handleMessageList(input: {
           requireComplete: includeMentionMetadata,
           includeFiles: !metadataOnly,
           renderMarkdown: !metadataOnly,
+          fetchFileInfo: download,
         });
         const downloadedPaths = await downloadMessageFiles({
           auth,
@@ -308,6 +313,7 @@ export async function handleMessageList(input: {
           withoutReactions,
           includeFiles: !metadataOnly,
           renderMarkdown: !metadataOnly,
+          fetchFileInfo: download,
         });
         const downloadedPaths = await downloadMessageFiles({
           auth,
@@ -372,6 +378,7 @@ export async function handleMessageList(input: {
             includeReactions,
             includeFiles: !metadataOnly,
             renderMarkdown: !metadataOnly,
+            fetchFileInfo: download,
           });
           return msg.thread_ts ?? msg.ts;
         })());
@@ -385,6 +392,7 @@ export async function handleMessageList(input: {
         requireComplete: includeMentionMetadata,
         includeFiles: !metadataOnly,
         renderMarkdown: !metadataOnly,
+        fetchFileInfo: download,
       });
       const downloadedPaths = await downloadMessageFiles({
         auth,
