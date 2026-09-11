@@ -74,6 +74,13 @@ describe("parseInlineElements", () => {
     ]);
   });
 
+  test("Markdown links are parsed as links with text", () => {
+    expect(parseInlineElements("Review [PR #42](https://example.com/pull/42)")).toEqual([
+      { type: "text", text: "Review " },
+      { type: "link", url: "https://example.com/pull/42", text: "PR #42" },
+    ]);
+  });
+
   test("non-url angle bracket text is preserved as text", () => {
     expect(parseInlineElements("Use <fix>")).toEqual([
       { type: "text", text: "Use " },
@@ -269,7 +276,7 @@ describe("textToRichTextBlocks", () => {
     ]);
   });
 
-  test("Slack manual links and CommonMark links remain distinct in list items", () => {
+  test("Slack manual and Markdown links become link elements in list items", () => {
     const result = textToRichTextBlocks(
       "- Review <https://example.com/pull/42|PR #42>\n- Review [PR #43](https://example.com/pull/43)",
     )!;
@@ -281,7 +288,8 @@ describe("textToRichTextBlocks", () => {
       { type: "link", url: "https://example.com/pull/42", text: "PR #42" },
     ]);
     expect(list.elements[1]!.elements).toEqual([
-      { type: "text", text: "Review [PR #43](https://example.com/pull/43)" },
+      { type: "text", text: "Review " },
+      { type: "link", url: "https://example.com/pull/43", text: "PR #43" },
     ]);
   });
 
