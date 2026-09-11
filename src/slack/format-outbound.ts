@@ -1,3 +1,5 @@
+import { markdownLinksToSlackMrkdwn } from "./markdown-inline.ts";
+
 /**
  * Prepare user-authored text for Slack's `chat.postMessage` / `chat.update`.
  *
@@ -17,39 +19,14 @@ export function formatOutboundSlackText(text: string): string {
     return "";
   }
 
-  const codeStash: string[] = [];
-  let out = text.replace(/(`+)[\s\S]*?\1/g, (match) => {
-    codeStash.push(match);
-    return `\uE000${codeStash.length - 1}\uE001`;
-  });
-
   // Slack does not understand CommonMark links in message text. Normalize the
   // common inline form while leaving images, escaped links, and code alone.
-  out = out.replace(
-    /(?<![!\\])\[([^\]\n]+)\]\(((?:https?:\/\/|mailto:)(?:[^()\s]|\([^()\s]*\))+?)\)/gi,
-    (...match: unknown[]) => {
-      const rawLabel = String(match[1]);
-      const rawUrl = String(match[2]);
-      const label = rawLabel
-        .replace(/\\([\\[\]()])/g, "$1")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-      const url = rawUrl
-        .replace(/\\([\\[\]()])/g, "$1")
-        .replace(/\|/g, "%7C")
-        .replace(/</g, "%3C")
-        .replace(/>/g, "%3E");
-      return `<${url}|${label}>`;
-    },
-  );
-
-  out = out.replace(/\uE000(\d+)\uE001/g, (_match, idx) => codeStash[Number(idx)]!);
+  let out = markdownLinksToSlackMrkdwn(text);
 
   // Protect already-formatted Slack tokens so `<`/`>` inside them aren't escaped.
   const stash: string[] = [];
   out = out.replace(
-    /<(?:@[UWB][A-Z0-9]+(?:\|[^>]*)?|#[CG][A-Z0-9]+(?:\|[^>]*)?|!subteam\^[A-Z0-9]+(?:\|[^>]*)?|![a-zA-Z]+(?:\|[^>]*)?|(?:https?:\/\/|mailto:)[^>]+)>/g,
+    /<(?:@[UWB][A-Z0-9]+(?:\|[^>]*)?|#[CG][A-Z0-9]+(?:\|[^>]*)?|!subteam\^[A-Z0-9]+(?:\|[^>]*)?|![a-zA-Z]+(?:\|[^>]*)?|(?:https?:\/\/|mailto:)[^>]+)>/gi,
     (m) => {
       stash.push(m);
       return `\u0000${stash.length - 1}\u0000`;

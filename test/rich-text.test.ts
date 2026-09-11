@@ -81,6 +81,25 @@ describe("parseInlineElements", () => {
     ]);
   });
 
+  test("Markdown links inside emphasis retain the emphasis", () => {
+    expect(parseInlineElements("*Review [PR](https://e.test)*")).toEqual([
+      { type: "text", text: "Review ", style: { bold: true } },
+      { type: "link", url: "https://e.test", text: "PR", style: { bold: true } },
+    ]);
+  });
+
+  test("multi-backtick code spans keep Markdown links as code", () => {
+    expect(parseInlineElements("``foo ` [link](https://e.test)``")).toEqual([
+      { type: "text", text: "foo ` [link](https://e.test)", style: { code: true } },
+    ]);
+  });
+
+  test("Markdown links support uppercase schemes and nested labels", () => {
+    expect(parseInlineElements("[A \\] [nested]](HTTPS://E.TEST)")).toEqual([
+      { type: "link", url: "https://E.TEST", text: "A ] [nested]" },
+    ]);
+  });
+
   test("non-url angle bracket text is preserved as text", () => {
     expect(parseInlineElements("Use <fix>")).toEqual([
       { type: "text", text: "Use " },
@@ -290,6 +309,27 @@ describe("textToRichTextBlocks", () => {
     expect(list.elements[1]!.elements).toEqual([
       { type: "text", text: "Review " },
       { type: "link", url: "https://example.com/pull/43", text: "PR #43" },
+    ]);
+  });
+
+  test("links inside emphasized list items retain the emphasis", () => {
+    const result = textToRichTextBlocks("- *Review [PR](https://e.test)*")!;
+    const list = result[0]!.elements.find((e) => e.type === "rich_text_list") as {
+      elements: { elements: unknown[] }[];
+    };
+    expect(list.elements[0]!.elements).toEqual([
+      { type: "text", text: "Review ", style: { bold: true } },
+      { type: "link", url: "https://e.test", text: "PR", style: { bold: true } },
+    ]);
+  });
+
+  test("multi-backtick code spans in list items do not activate links", () => {
+    const result = textToRichTextBlocks("- ``foo ` [link](https://e.test)``")!;
+    const list = result[0]!.elements.find((e) => e.type === "rich_text_list") as {
+      elements: { elements: unknown[] }[];
+    };
+    expect(list.elements[0]!.elements).toEqual([
+      { type: "text", text: "foo ` [link](https://e.test)", style: { code: true } },
     ]);
   });
 
