@@ -66,6 +66,21 @@ describe("formatOutboundSlackText", () => {
     );
   });
 
+  test("handles uppercase schemes and canonicalizes them for Slack", () => {
+    expect(formatOutboundSlackText("[Example](HTTPS://E.TEST)")).toBe("<https://E.TEST|Example>");
+  });
+
+  test("handles escaped and nested brackets in link labels", () => {
+    expect(formatOutboundSlackText("[A \\] [nested]](https://e.test)")).toBe(
+      "<https://e.test|A ] [nested]>",
+    );
+  });
+
+  test("preserves Markdown links inside multi-backtick code spans", () => {
+    const input = "``foo ` [link](https://e.test)``";
+    expect(formatOutboundSlackText(input)).toBe(input);
+  });
+
   test("does not promote email-like or mid-word @", () => {
     expect(formatOutboundSlackText("mail me at user@Udomain.com")).toBe(
       "mail me at user@Udomain.com",

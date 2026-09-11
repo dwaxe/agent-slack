@@ -1,3 +1,5 @@
+import { parseCodeSpanAt, parseMarkdownLinkAt } from "./markdown-inline.ts";
+
 type InlineStyle = { bold?: true; italic?: true; strike?: true; code?: true };
 
 type InlineElement =
@@ -46,9 +48,79 @@ const BLOCKQUOTE_RE = /^> (.*)$/;
  * and [label](url).
  */
 export function parseInlineElements(text: string): InlineElement[] {
+  const protectedInline = protectInlineCodeAndLinks(text);
+  return parseProtectedInlineElements(protectedInline.text, protectedInline);
+}
+
+type ProtectedInlineToken =
+  | { type: "code"; content: string }
+  | { type: "link"; label: string; url: string };
+
+type ProtectedInlineContext = {
+  text: string;
+  tokens: ProtectedInlineToken[];
+  marker: string;
+  suffix: string;
+};
+
+function protectInlineCodeAndLinks(text: string): ProtectedInlineContext {
+  let marker = "\uE000";
+  while (text.includes(marker)) {
+    marker += "\uE000";
+  }
+  const suffix = "\uE001";
+  const tokens: ProtectedInlineToken[] = [];
+  let protectedText = "";
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    const codeSpan = parseCodeSpanAt(text, cursor);
+    if (codeSpan) {
+      tokens.push({ type: "code", content: codeSpan.content });
+      protectedText += `${marker}${tokens.length - 1}${suffix}`;
+      cursor = codeSpan.end;
+      continue;
+    }
+
+    const link = parseMarkdownLinkAt(text, cursor);
+    if (link) {
+      tokens.push({ type: "link", label: link.label, url: link.url });
+      protectedText += `${marker}${tokens.length - 1}${suffix}`;
+      cursor = link.end;
+      continue;
+    }
+
+    protectedText += text[cursor];
+    cursor++;
+  }
+
+  return { text: protectedText, tokens, marker, suffix };
+}
+
+function parseProtectedInlineElements(
+  text: string,
+  context: ProtectedInlineContext,
+): InlineElement[] {
+  const { tokens, marker, suffix } = context;
   const elements: InlineElement[] = [];
-  const re =
-    /`([^`]+)`|(?:^|(?<=[^A-Za-z0-9_])):([a-zA-Z0-9_+-]+):(?![A-Za-z0-9_+-])|\*([^*]+)\*|_([^_]+)_|~([^~]+)~|<@([UWB][A-Z0-9]+)(?:\|[^>]*)?>|<#([CG][A-Z0-9]+)(?:\|[^>]*)?>|<!subteam\^([A-Z0-9]+)(?:\|[^>]*)?>|<!(here|channel|everyone)(?:\|[^>]*)?>|(?<![!\\])\[([^\]\n]+)\]\(((?:https?:\/\/|mailto:)(?:[^()\s]|\([^()\s]*\))+?)\)|<([^>|]+)\|([^>]+)>|<([^>|]+)>|(?:^|(?<=[^A-Za-z0-9_]))@([UWB][A-Z0-9]{6,})\b|(?:^|(?<=[^A-Za-z0-9_]))@(here|channel|everyone)\b/g;
+  const re = new RegExp(
+    [
+      `${escapeRegExp(marker)}(?<protectedTokenIndex>\\d+)${escapeRegExp(suffix)}`,
+      "(?:^|(?<=[^A-Za-z0-9_])):(?<emojiName>[a-zA-Z0-9_+-]+):(?![A-Za-z0-9_+-])",
+      "\\*(?<bold>[^*]+)\\*",
+      "_(?<italic>[^_]+)_",
+      "~(?<strike>[^~]+)~",
+      "<@(?<userToken>[UWB][A-Z0-9]+)(?:\\|[^>]*)?>",
+      "<#(?<channelToken>[CG][A-Z0-9]+)(?:\\|[^>]*)?>",
+      "<!subteam\\^(?<usergroupToken>[A-Z0-9]+)(?:\\|[^>]*)?>",
+      "<!(?<broadcastToken>here|channel|everyone)(?:\\|[^>]*)?>",
+      "<(?<linkUrl>[^>|]+)\\|(?<linkText>[^>]+)>",
+      "<(?<bareUrl>[^>|]+)>",
+      "(?:^|(?<=[^A-Za-z0-9_]))@(?<bareUserId>[UWB][A-Z0-9]{6,})\\b",
+      "(?:^|(?<=[^A-Za-z0-9_]))@(?<bareBroadcast>here|channel|everyone)\\b",
+    ].join("|"),
+    "g",
+  );
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -63,9 +135,9 @@ export function parseInlineElements(text: string): InlineElement[] {
       pushText(text.slice(lastIndex, match.index));
     }
 
-    const [
-      ,
-      code,
+    const groups = match.groups ?? {};
+    const {
+      protectedTokenIndex,
       emojiName,
       bold,
       italic,
@@ -74,24 +146,33 @@ export function parseInlineElements(text: string): InlineElement[] {
       channelToken,
       usergroupToken,
       broadcastToken,
-      markdownLinkText,
-      markdownLinkUrl,
       linkUrl,
       linkText,
       bareUrl,
       bareUserId,
       bareBroadcast,
-    ] = match;
-    if (code != null) {
-      elements.push({ type: "text", text: code, style: { code: true } });
+    } = groups;
+    if (protectedTokenIndex != null) {
+      const token = tokens[Number(protectedTokenIndex)]!;
+      if (token.type === "code") {
+        elements.push({ type: "text", text: token.content, style: { code: true } });
+      } else {
+        elements.push({ type: "link", url: token.url, text: token.label });
+      }
     } else if (emojiName != null) {
       elements.push({ type: "emoji", name: emojiName });
     } else if (bold != null) {
-      elements.push({ type: "text", text: bold, style: { bold: true } });
+      elements.push(
+        ...applyInlineStyle(parseProtectedInlineElements(bold, context), { bold: true }),
+      );
     } else if (italic != null) {
-      elements.push({ type: "text", text: italic, style: { italic: true } });
+      elements.push(
+        ...applyInlineStyle(parseProtectedInlineElements(italic, context), { italic: true }),
+      );
     } else if (strike != null) {
-      elements.push({ type: "text", text: strike, style: { strike: true } });
+      elements.push(
+        ...applyInlineStyle(parseProtectedInlineElements(strike, context), { strike: true }),
+      );
     } else if (userToken != null) {
       elements.push({ type: "user", user_id: userToken });
     } else if (channelToken != null) {
@@ -102,12 +183,6 @@ export function parseInlineElements(text: string): InlineElement[] {
       elements.push({
         type: "broadcast",
         range: broadcastToken as "here" | "channel" | "everyone",
-      });
-    } else if (markdownLinkText != null && markdownLinkUrl != null) {
-      elements.push({
-        type: "link",
-        url: markdownLinkUrl.replace(/\\([\\[\]()])/g, "$1"),
-        text: markdownLinkText.replace(/\\([\\[\]()])/g, "$1"),
       });
     } else if (linkUrl != null && linkText != null && isSlackManualLinkUrl(linkUrl)) {
       elements.push({ type: "link", url: linkUrl, text: linkText });
@@ -134,6 +209,19 @@ export function parseInlineElements(text: string): InlineElement[] {
   }
 
   return elements.length > 0 ? elements : [{ type: "text", text }];
+}
+
+function applyInlineStyle(elements: InlineElement[], style: InlineStyle): InlineElement[] {
+  return elements.map((element) => {
+    if (element.type !== "text" && element.type !== "link") {
+      return element;
+    }
+    return { ...element, style: { ...element.style, ...style } };
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isSlackManualLinkUrl(value: string): boolean {
