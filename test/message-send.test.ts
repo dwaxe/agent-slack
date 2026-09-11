@@ -235,6 +235,11 @@ function createEnterpriseGridContext() {
     xoxc_token: "xoxc-test",
     xoxd_cookie: "xoxd-test",
   };
+  const enterpriseAuth = {
+    auth_type: "browser" as const,
+    xoxc_token: "xoxc-enterprise",
+    xoxd_cookie: "xoxd-enterprise",
+  };
   const workspaceClient = {
     credentialFingerprint: () => TEST_CREDENTIAL_FINGERPRINT,
     api: api("workspace"),
@@ -247,7 +252,7 @@ function createEnterpriseGridContext() {
     ...createContext([]),
     getClientForWorkspace: async (selector?: string) =>
       selector === enterpriseUrl
-        ? { client: enterpriseClient as never, auth, workspace_url: enterpriseUrl }
+        ? { client: enterpriseClient as never, auth: enterpriseAuth, workspace_url: enterpriseUrl }
         : { client: workspaceClient as never, auth, workspace_url: workspaceUrl },
   };
   return { ctx, calls };

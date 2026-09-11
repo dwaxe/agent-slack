@@ -104,7 +104,10 @@ export async function fetchMessage(
   const enrichedFiles =
     input.includeFiles === false
       ? undefined
-      : await parseAndEnrichFiles(client, msg.files, input.fetchFileInfo !== false);
+      : await parseAndEnrichFiles(client, {
+          rawFiles: msg.files,
+          fetchFileInfo: input.fetchFileInfo !== false,
+        });
 
   return toSlackMessageSummary({
     channelId: input.ref.channel_id,
@@ -202,7 +205,10 @@ export async function fetchChannelHistory(
       const enrichedFiles =
         input.includeFiles === false
           ? undefined
-          : await parseAndEnrichFiles(client, m.files, input.fetchFileInfo !== false);
+          : await parseAndEnrichFiles(client, {
+              rawFiles: m.files,
+              fetchFileInfo: input.fetchFileInfo !== false,
+            });
 
       out.push(
         toSlackMessageSummary({
@@ -314,7 +320,10 @@ export async function fetchThread(
       const enrichedFiles =
         input.includeFiles === false
           ? undefined
-          : await parseAndEnrichFiles(client, m.files, input.fetchFileInfo !== false);
+          : await parseAndEnrichFiles(client, {
+              rawFiles: m.files,
+              fetchFileInfo: input.fetchFileInfo !== false,
+            });
 
       out.push(
         toSlackMessageSummary({
@@ -353,16 +362,15 @@ export async function fetchThread(
 
 async function parseAndEnrichFiles(
   client: SlackApiClient,
-  rawFiles: unknown,
-  fetchFileInfo = true,
+  input: { rawFiles: unknown; fetchFileInfo: boolean },
 ): Promise<SlackFileSummary[] | undefined> {
-  const files = asArray(rawFiles)
+  const files = asArray(input.rawFiles)
     .map((file) => toSlackFileSummary(file))
     .filter((file): file is SlackFileSummary => file !== null);
   if (files.length === 0) {
     return undefined;
   }
-  return fetchFileInfo ? await enrichFiles(client, files) : files;
+  return input.fetchFileInfo ? await enrichFiles(client, files) : files;
 }
 
 export { toCompactMessage, type CompactSlackMessage } from "./message-compact.ts";

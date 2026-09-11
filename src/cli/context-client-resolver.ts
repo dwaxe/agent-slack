@@ -78,7 +78,8 @@ export async function getClientForWorkspace(
   if (
     env &&
     !sameAuth(env, options.excludeAuth) &&
-    environmentAuthMatchesSelector({ env, envWorkspaceUrl, selector, resolvedWorkspaceUrl })
+    (env.auth_type === "standard" ||
+      environmentAuthMatchesSelector({ env, envWorkspaceUrl, selector, resolvedWorkspaceUrl }))
   ) {
     const urlForClient =
       resolvedWorkspaceUrl ?? (envWorkspaceUrl ? normalizeUrl(envWorkspaceUrl) : undefined);
@@ -211,8 +212,11 @@ function environmentAuthMatchesSelector(input: {
   selector?: string;
   resolvedWorkspaceUrl?: string;
 }): boolean {
-  if (!input.selector || !input.envWorkspaceUrl) {
+  if (!input.selector) {
     return true;
+  }
+  if (!input.envWorkspaceUrl) {
+    return false;
   }
   const normalizedEnvUrl = tryNormalizeUrl(input.envWorkspaceUrl);
   if (!normalizedEnvUrl) {
