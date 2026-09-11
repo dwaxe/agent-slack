@@ -70,6 +70,10 @@ describe("formatOutboundSlackText", () => {
     expect(formatOutboundSlackText("[Example](HTTPS://E.TEST)")).toBe("<https://E.TEST|Example>");
   });
 
+  test("handles escaped punctuation in link schemes", () => {
+    expect(formatOutboundSlackText("[Example](https\\://e.test)")).toBe("<https://e.test|Example>");
+  });
+
   test("handles escaped and nested brackets in link labels", () => {
     expect(formatOutboundSlackText("[A \\] [nested]](https://e.test)")).toBe(
       "<https://e.test|A ] [nested]>",
