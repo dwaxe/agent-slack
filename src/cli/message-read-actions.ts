@@ -154,12 +154,17 @@ export async function handleMessageList(input: {
         warnOnTruncatedSlackUrl(ref);
         const { client, auth } = await input.ctx.getClientForWorkspace(ref.workspace_url);
         const includeReactions = Boolean(input.options.includeReactions);
-        const msg = await fetchMessage(client, { ref, includeReactions });
+        const msg = await fetchMessage(client, {
+          ref,
+          includeReactions,
+          fetchFileInfo: download,
+        });
         const rootTs = msg.thread_ts ?? msg.ts;
         const threadMessages = await fetchThread(client, {
           channelId: ref.channel_id,
           threadTs: rootTs,
           includeReactions,
+          fetchFileInfo: download,
         });
         const downloadedPaths = await downloadMessageFiles({
           auth,
@@ -223,6 +228,7 @@ export async function handleMessageList(input: {
           includeReactions: includeReactions || hasReactionFilters,
           withReactions,
           withoutReactions,
+          fetchFileInfo: download,
         });
         const downloadedPaths = await downloadMessageFiles({
           auth,
@@ -272,7 +278,11 @@ export async function handleMessageList(input: {
             raw: input.targetInput,
           };
           const includeReactions = Boolean(input.options.includeReactions);
-          const msg = await fetchMessage(client, { ref, includeReactions });
+          const msg = await fetchMessage(client, {
+            ref,
+            includeReactions,
+            fetchFileInfo: download,
+          });
           return msg.thread_ts ?? msg.ts;
         })());
 
@@ -281,6 +291,7 @@ export async function handleMessageList(input: {
         channelId,
         threadTs: rootTs,
         includeReactions,
+        fetchFileInfo: download,
       });
       const downloadedPaths = await downloadMessageFiles({
         auth,

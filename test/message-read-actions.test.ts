@@ -50,6 +50,14 @@ function hostedFile(id: string, metadata: { name: string; mimetype: string }) {
   };
 }
 
+function snippetFile(id: string, metadata: { name: string; mimetype: string }) {
+  return {
+    id,
+    ...metadata,
+    mode: "snippet",
+  };
+}
+
 function setFetchMock(fn: (...args: unknown[]) => Promise<Response>) {
   const mocked = mock(fn) as unknown as typeof globalThis.fetch;
   mocked.preconnect = () => {};
@@ -79,9 +87,9 @@ function firstFile(result: Record<string, unknown>, messageIndex = 0): Record<st
 
 function expectMetadataOnly(
   file: Record<string, unknown>,
-  expected: { name: string; mimetype: string },
+  expected: { name: string; mimetype: string; mode?: string },
 ) {
-  expect(file).toEqual({ ...expected, mode: "hosted" });
+  expect(file).toEqual({ mode: "hosted", ...expected });
   expect(file).not.toHaveProperty("path");
   expect(file).not.toHaveProperty("error");
 }
@@ -96,11 +104,15 @@ describe("message list attachment downloads", () => {
 
   afterEach(async () => {
     globalThis.fetch = originalFetch;
-    process.env.XDG_RUNTIME_DIR = originalXdgRuntimeDir;
+    if (originalXdgRuntimeDir === undefined) {
+      delete process.env.XDG_RUNTIME_DIR;
+    } else {
+      process.env.XDG_RUNTIME_DIR = originalXdgRuntimeDir;
+    }
     await rm(runtimeDir, { recursive: true, force: true });
   });
 
-  test("channel history keeps file metadata without fetching bodies", async () => {
+  test("channel history keeps snippet metadata without fetching file info or bodies", async () => {
     const { ctx, calls } = createContext({
       "conversations.history": {
         messages: [
@@ -109,7 +121,7 @@ describe("message list attachment downloads", () => {
             text: "metadata only",
             user: "U11111111",
             files: [
-              hostedFile("FCHANNEL", {
+              snippetFile("FCHANNEL", {
                 name: "oversized.bin",
                 mimetype: "application/octet-stream",
               }),
@@ -141,13 +153,26 @@ describe("message list attachment downloads", () => {
     expectMetadataOnly(firstFile(result), {
       name: "oversized.bin",
       mimetype: "application/octet-stream",
+      mode: "snippet",
     });
   });
 
-  test("URL thread listing keeps file metadata without fetching bodies", async () => {
+  test("URL thread listing skips file info and body fetches in metadata-only mode", async () => {
     const { ctx, calls } = createContext({
       "conversations.history": {
-        messages: [{ ts: ROOT_TS, text: "thread root", user: "U11111111" }],
+        messages: [
+          {
+            ts: ROOT_TS,
+            text: "thread root",
+            user: "U11111111",
+            files: [
+              snippetFile("FROOT", {
+                name: "root-snippet.txt",
+                mimetype: "text/plain",
+              }),
+            ],
+          },
+        ],
       },
       "conversations.replies": {
         messages: [
@@ -188,15 +213,15 @@ describe("message list attachment downloads", () => {
     });
   });
 
-  test("channel thread listing keeps file metadata without fetching bodies", async () => {
-    const { ctx } = createContext({
+  test("channel thread listing keeps snippet metadata without fetching file info or bodies", async () => {
+    const { ctx, calls } = createContext({
       "conversations.replies": {
         messages: [
           {
             ts: ROOT_TS,
             text: "metadata-only channel thread",
             files: [
-              hostedFile("FCHANNELTHREAD", {
+              snippetFile("FCHANNELTHREAD", {
                 name: "thread-archive.zip",
                 mimetype: "application/zip",
               }),
@@ -213,6 +238,7 @@ describe("message list attachment downloads", () => {
       download: false,
     });
 
+    expect(calls).toEqual(["conversations.replies"]);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       messages: [{ ts: ROOT_TS, content: "metadata-only channel thread" }],
@@ -220,13 +246,26 @@ describe("message list attachment downloads", () => {
     expectMetadataOnly(firstFile(result), {
       name: "thread-archive.zip",
       mimetype: "application/zip",
+      mode: "snippet",
     });
   });
 
-  test("channel --ts thread resolution does not fetch file bodies", async () => {
+  test("channel --ts thread resolution does not fetch file info or bodies", async () => {
     const { ctx, calls } = createContext({
       "conversations.history": {
-        messages: [{ ts: REPLY_TS, thread_ts: ROOT_TS, text: "selected reply" }],
+        messages: [
+          {
+            ts: REPLY_TS,
+            thread_ts: ROOT_TS,
+            text: "selected reply",
+            files: [
+              snippetFile("FSELECTED", {
+                name: "selected-snippet.txt",
+                mimetype: "text/plain",
+              }),
+            ],
+          },
+        ],
       },
       "conversations.replies": {
         messages: [
