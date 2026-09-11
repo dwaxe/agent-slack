@@ -22,7 +22,11 @@ import {
   type SendReceipt,
   type SendReceiptIntent,
 } from "../lib/send-receipts.ts";
-import { getClientForWorkspace, normalizeUrl } from "./context-client-resolver.ts";
+import {
+  getClientForWorkspace,
+  normalizeUrl,
+  type ClientResolutionOptions,
+} from "./context-client-resolver.ts";
 
 export type CliContext = {
   effectiveWorkspaceUrl: (flag?: string) => string | undefined;
@@ -34,7 +38,10 @@ export type CliContext = {
     workspaceUrl: string | undefined;
     work: () => Promise<T>;
   }) => Promise<T>;
-  getClientForWorkspace: (workspaceUrl?: string) => Promise<{
+  getClientForWorkspace: (
+    workspaceUrl?: string,
+    options?: ClientResolutionOptions,
+  ) => Promise<{
     client: SlackApiClient;
     auth: SlackAuth;
     workspace_url?: string;

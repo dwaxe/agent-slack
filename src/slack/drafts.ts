@@ -177,12 +177,80 @@ function buildDraftBody(input: {
 function assertNativeDraftBlocks(blocks: unknown[]): void {
   const allRichText =
     blocks.length > 0 && blocks.every((block) => isRecord(block) && block.type === "rich_text");
-  const hasContent = blocks.some((block) => extractMrkdwnFromRichTextBlock(block).trim());
+  const hasContent = blocks.some(hasRichTextContent);
   if (!allRichText || !hasContent) {
     throw new Error(
       "Slack-native drafts require non-empty rich_text blocks; other top-level Block Kit blocks can be stripped or tombstoned by Slack Desktop.",
     );
   }
+  for (const block of blocks) {
+    assertRichTextAdjacency(block);
+  }
+}
+
+function hasRichTextContent(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.type === "text") {
+    return Boolean(getString(value.text)?.trim());
+  }
+  const children = asArray(value.elements);
+  if (children.some(hasRichTextContent)) {
+    return true;
+  }
+  return (
+    typeof value.type === "string" && value.type.length > 0 && !isRichTextContainer(value.type)
+  );
+}
+
+function assertRichTextAdjacency(block: unknown): void {
+  if (!isRecord(block)) {
+    return;
+  }
+  const elements = asArray(block.elements);
+  for (let index = 0; index < elements.length - 1; index++) {
+    const current = elements[index];
+    const next = elements[index + 1];
+    if (
+      isRecord(current) &&
+      current.type === "rich_text_section" &&
+      isRecord(next) &&
+      isRichTextAdjacentContainer(next.type) &&
+      !sectionEndsWithNewline(current)
+    ) {
+      throw new Error(
+        `A rich_text_section immediately before ${next.type} must end its final text content with a newline.`,
+      );
+    }
+  }
+}
+
+function isRichTextContainer(type: unknown): boolean {
+  return (
+    type === "rich_text" ||
+    type === "rich_text_section" ||
+    type === "rich_text_list" ||
+    type === "rich_text_quote" ||
+    type === "rich_text_preformatted"
+  );
+}
+
+function isRichTextAdjacentContainer(type: unknown): boolean {
+  return (
+    type === "rich_text_list" || type === "rich_text_quote" || type === "rich_text_preformatted"
+  );
+}
+
+function sectionEndsWithNewline(section: Record<string, unknown>): boolean {
+  const elements = asArray(section.elements);
+  for (let index = elements.length - 1; index >= 0; index--) {
+    const element = elements[index];
+    if (isRecord(element) && typeof element.text === "string") {
+      return element.text.endsWith("\n");
+    }
+  }
+  return false;
 }
 
 /**

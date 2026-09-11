@@ -13,6 +13,10 @@ import { resolveWorkspaceSelector } from "./workspace-selector.ts";
 import { SlackApiClient, type SlackAuth } from "../slack/client.ts";
 import { normalizeSlackWorkspaceUrl } from "../slack/workspace-url.ts";
 
+export type ClientResolutionOptions = {
+  excludeAuth?: SlackAuth;
+};
+
 export function normalizeUrl(u: string): string {
   return normalizeSlackWorkspaceUrl(u);
 }
@@ -41,7 +45,10 @@ function pickAuthFromEnv(): SlackAuth | null {
   return { auth_type: "standard", token };
 }
 
-export async function getClientForWorkspace(workspaceUrl?: string): Promise<{
+export async function getClientForWorkspace(
+  workspaceUrl?: string,
+  options: ClientResolutionOptions = {},
+): Promise<{
   client: SlackApiClient;
   auth: SlackAuth;
   workspace_url?: string;
@@ -54,9 +61,9 @@ export async function getClientForWorkspace(workspaceUrl?: string): Promise<{
     const creds = await loadCredentials();
     const resolved = resolveWorkspaceSelector(creds.workspaces, selector);
     if (resolved.ambiguous.length > 0) {
-      const options = resolved.ambiguous.map((w) => w.workspace_url).join(", ");
+      const matches = resolved.ambiguous.map((w) => w.workspace_url).join(", ");
       throw new Error(
-        `Workspace selector "${selector}" is ambiguous. Matches: ${options}. Pass a more specific selector or full workspace URL.`,
+        `Workspace selector "${selector}" is ambiguous. Matches: ${matches}. Pass a more specific selector or full workspace URL.`,
       );
     }
     if (resolved.match) {
@@ -67,10 +74,14 @@ export async function getClientForWorkspace(workspaceUrl?: string): Promise<{
   }
 
   const env = pickAuthFromEnv();
-  if (env) {
-    const rawEnvWorkspaceUrl = process.env.SLACK_WORKSPACE_URL?.trim();
+  const envWorkspaceUrl = process.env.SLACK_WORKSPACE_URL?.trim();
+  if (
+    env &&
+    !sameAuth(env, options.excludeAuth) &&
+    environmentAuthMatchesSelector({ env, envWorkspaceUrl, selector, resolvedWorkspaceUrl })
+  ) {
     const urlForClient =
-      resolvedWorkspaceUrl ?? (rawEnvWorkspaceUrl ? normalizeUrl(rawEnvWorkspaceUrl) : undefined);
+      resolvedWorkspaceUrl ?? (envWorkspaceUrl ? normalizeUrl(envWorkspaceUrl) : undefined);
     return {
       client: new SlackApiClient(env, { workspaceUrl: urlForClient }),
       auth: env,
@@ -181,6 +192,36 @@ export async function getClientForWorkspace(workspaceUrl?: string): Promise<{
 
   throw new Error(
     'No Slack credentials available. Try "agent-slack auth import-desktop", "agent-slack auth import-chrome", "agent-slack auth import-brave", "agent-slack auth import-firefox", or set SLACK_TOKEN / SLACK_COOKIE_D.',
+  );
+}
+
+function sameAuth(left: SlackAuth, right: SlackAuth | undefined): boolean {
+  if (!right) {
+    return false;
+  }
+  if (left.auth_type === "standard") {
+    return right.auth_type === "standard" && left.token === right.token;
+  }
+  return right.auth_type === "browser" && left.xoxc_token === right.xoxc_token;
+}
+
+function environmentAuthMatchesSelector(input: {
+  env: SlackAuth;
+  envWorkspaceUrl?: string;
+  selector?: string;
+  resolvedWorkspaceUrl?: string;
+}): boolean {
+  if (!input.selector || !input.envWorkspaceUrl) {
+    return true;
+  }
+  const normalizedEnvUrl = tryNormalizeUrl(input.envWorkspaceUrl);
+  if (!normalizedEnvUrl) {
+    return false;
+  }
+  const selector = input.resolvedWorkspaceUrl ?? input.selector;
+  return Boolean(
+    resolveWorkspaceSelector([{ workspace_url: normalizedEnvUrl, auth: input.env }], selector)
+      .match,
   );
 }
 
