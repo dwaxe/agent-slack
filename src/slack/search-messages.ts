@@ -270,17 +270,19 @@ export async function searchMessagesInChannelsFallback(
   const results: SearchCompactMessage[] = [];
 
   channelLoop: for (const channelId of channelIds) {
-    let cursorLatest: string | undefined;
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
     for (;;) {
       const resp = await client.api("conversations.history", {
         channel: channelId,
         limit: 200,
-        latest: cursorLatest,
+        cursor,
       });
       const messages = isRecord(resp) ? asArray(resp.messages).filter(isRecord) : [];
-      if (messages.length === 0) {
-        break;
-      }
+      const responseMetadata = isRecord(resp.response_metadata) ? resp.response_metadata : null;
+      const nextCursor = responseMetadata
+        ? getString(responseMetadata.next_cursor)?.trim() || undefined
+        : undefined;
 
       let reachedAfterBoundary = false;
       for (const m of messages) {
@@ -330,16 +332,11 @@ export async function searchMessagesInChannelsFallback(
         }
       }
 
-      if (reachedAfterBoundary || resp.has_more === false) {
+      if (reachedAfterBoundary || !nextCursor || seenCursors.has(nextCursor)) {
         break;
       }
-
-      const last = messages.at(-1);
-      const nextLatest = last ? getString(last.ts) : undefined;
-      if (!nextLatest || nextLatest === cursorLatest) {
-        break;
-      }
-      cursorLatest = nextLatest;
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
     }
   }
 
