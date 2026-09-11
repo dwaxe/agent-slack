@@ -100,6 +100,12 @@ describe("parseInlineElements", () => {
     ]);
   });
 
+  test("Markdown links support escaped punctuation in schemes", () => {
+    expect(parseInlineElements("[Email](mailto\\:x@e.test)")).toEqual([
+      { type: "link", url: "mailto:x@e.test", text: "Email" },
+    ]);
+  });
+
   test("Slack link labels do not expose protected inline markers", () => {
     expect(parseInlineElements("<https://e.test|`code`>")).toEqual([
       { type: "link", url: "https://e.test", text: "`code`" },

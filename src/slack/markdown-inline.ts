@@ -203,7 +203,7 @@ function parseLinkDestination(
   }
 
   const value = text.slice(valueStart, valueEnd);
-  if (!isSupportedLinkDestination(value)) {
+  if (!isSupportedLinkDestination(unescapeMarkdownPunctuation(value))) {
     return null;
   }
   return { value, end };
