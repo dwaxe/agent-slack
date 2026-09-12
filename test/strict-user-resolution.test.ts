@@ -1,205 +1,306 @@
 import { describe, expect, test } from "bun:test";
-import { resolveStrictUserIdentities } from "../src/slack/strict-user-resolution.ts";
-import { activeUser, createClient } from "./strict-user-resolution-fixtures.ts";
+import type { SlackApiClient } from "../src/slack/client.ts";
+import {
+  incompleteStrictUserResolution,
+  MAX_USER_RESOLUTION_IDENTITIES,
+  resolveStrictUserIdentities,
+  StrictUserLookupRequestError,
+} from "../src/slack/strict-user-resolution.ts";
 
-describe("resolveStrictUserIdentities", () => {
-  test("resolves a batch with one complete paginated directory scan", async () => {
-    const { client, calls } = createClient([
-      {
-        members: [
-          activeUser("U11111111", {
-            name: "alice",
-            realName: "Alice Example",
-            displayName: "Alice",
-            email: "alice@example.com",
-          }),
-          activeUser("W44444444", {
-            name: "enterprise",
-            extra: { is_app_user: true },
-          }),
-        ],
-        response_metadata: { next_cursor: "cursor-1" },
-      },
-      {
-        members: [
-          activeUser("U22222222", {
-            name: "bob",
-            realName: "Bob Smith",
-            displayName: "Bobby",
-            email: "bob@example.com",
-          }),
-        ],
-        response_metadata: { next_cursor: "" },
-      },
-    ]);
+type ApiCall = { method: string; params: Record<string, unknown> };
 
+function user(id: string, fields: Record<string, unknown> = {}): Record<string, unknown> {
+  const profile =
+    fields.profile && typeof fields.profile === "object" && !Array.isArray(fields.profile)
+      ? fields.profile
+      : {};
+  return {
+    id,
+    deleted: false,
+    is_bot: false,
+    ...fields,
+    profile: { ...profile },
+  };
+}
+
+function client(
+  handler: (method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>,
+): SlackApiClient {
+  return {
+    api: handler,
+    lookupUserByEmail: (email: string) => handler("users.lookupByEmail", { email }),
+  } as unknown as SlackApiClient;
+}
+
+describe("strict batch user resolution", () => {
+  test("uses one direct lookup per unique identity and never calls users.list", async () => {
+    const calls: ApiCall[] = [];
     const result = await resolveStrictUserIdentities({
-      client,
-      identities: ["@ALICE", "bob@example.com", "  Bob   Smith ", "w44444444"],
+      client: client(async (method, params) => {
+        calls.push({ method, params });
+        if (method === "users.info") {
+          return { user: user(String(params.user)) };
+        }
+        if (method === "users.lookupByEmail") {
+          return { user: user("U33333333") };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      }),
+      identities: ["U11111111", "W22222222", "Alice@Example.com"],
     });
 
-    expect(calls).toHaveLength(2);
-    expect(calls.map((call) => call.method)).toEqual(["users.list", "users.list"]);
-    expect(calls[0]?.params.cursor).toBeUndefined();
-    expect(calls[1]?.params.cursor).toBe("cursor-1");
-    expect(result.directory).toEqual({ status: "complete", pages: 2 });
-    expect(result.safe_to_mention).toBe(true);
-    expect(result.results).toEqual([
-      {
-        source: "@ALICE",
-        status: "resolved",
-        matched_by: ["input.handle->slack.name"],
-        mention: "<@U11111111>",
-      },
-      {
-        source: "bob@example.com",
-        status: "resolved",
-        matched_by: ["input.email->slack.profile.email"],
-        mention: "<@U22222222>",
-      },
-      {
-        source: "Bob Smith",
-        status: "resolved",
-        matched_by: [
-          "input.full_name->slack.profile.real_name",
-          "input.full_name->slack.real_name",
-        ],
-        mention: "<@U22222222>",
-      },
-      {
-        source: "w44444444",
-        status: "resolved",
-        matched_by: ["input.id->slack.id"],
-        mention: "<@W44444444>",
-      },
+    expect(calls).toEqual([
+      { method: "users.info", params: { user: "U11111111" } },
+      { method: "users.info", params: { user: "W22222222" } },
+      { method: "users.lookupByEmail", params: { email: "alice@example.com" } },
     ]);
-  });
-
-  test("keeps a first-page match provisional until last-page ambiguity is known", async () => {
-    const { client } = createClient([
-      {
-        members: [activeUser("U11111111", { name: "alex" })],
-        response_metadata: { next_cursor: "cursor-1" },
-      },
-      {
-        members: [activeUser("U22222222", { name: "alex" })],
-        response_metadata: { next_cursor: "" },
-      },
-    ]);
-
-    const result = await resolveStrictUserIdentities({
-      client,
-      identities: ["@alex"],
-    });
-
-    expect(result.results).toEqual([
-      {
-        source: "@alex",
-        status: "ambiguous",
-        candidate_count: 2,
-      },
-    ]);
-    expect(result.safe_to_mention).toBe(false);
-    expect(JSON.stringify(result)).not.toContain("<@");
-  });
-
-  test("ignores equality in fields that cannot authorize the input type", async () => {
-    const { client } = createClient([
-      {
-        members: [
-          activeUser("U11111111", { name: "alex", displayName: "First" }),
-          activeUser("U22222222", { name: "other", displayName: "alex" }),
-        ],
-      },
-    ]);
-
-    const result = await resolveStrictUserIdentities({
-      client,
-      identities: ["@alex"],
-    });
-
-    expect(result.safe_to_mention).toBe(true);
-    expect(result.results[0]).toMatchObject({
-      status: "resolved",
-      mention: "<@U11111111>",
-    });
-  });
-
-  test("filters known non-humans while allowing is_app_user humans", async () => {
-    const { client } = createClient([
-      {
-        members: [
-          activeUser("U11111111", { name: "deleted", deleted: true }),
-          activeUser("U22222222", { name: "bot", isBot: true }),
-          activeUser("U33333333", {
-            name: "workflow",
-            extra: { is_workflow_bot: true },
-          }),
-          activeUser("U44444444", {
-            name: "connector",
-            extra: { is_connector_bot: true },
-          }),
-          activeUser("U55555555", {
-            name: "profilebot",
-            profileExtra: { bot_id: "B11111111" },
-          }),
-          activeUser("U66666666", {
-            name: "human",
-            extra: { is_app_user: true },
-          }),
-          activeUser("U77777777", {
-            name: "profileapp",
-            profileExtra: { api_app_id: "A11111111" },
-          }),
-          activeUser("USLACKBOT", { name: "slackbot" }),
-        ],
-      },
-    ]);
-
-    const result = await resolveStrictUserIdentities({
-      client,
-      identities: [
-        "@deleted",
-        "@bot",
-        "@workflow",
-        "@connector",
-        "@profilebot",
-        "@human",
-        "@profileapp",
-        "USLACKBOT",
+    expect(result).toEqual({
+      lookups: { status: "complete", requests: 3 },
+      safe_to_mention: true,
+      results: [
+        {
+          source: "U11111111",
+          status: "resolved",
+          matched_by: ["input.id->slack.id"],
+          mention: "<@U11111111>",
+        },
+        {
+          source: "W22222222",
+          status: "resolved",
+          matched_by: ["input.id->slack.id"],
+          mention: "<@W22222222>",
+        },
+        {
+          source: "Alice@Example.com",
+          status: "resolved",
+          matched_by: ["input.email->slack.emailLookup"],
+          mention: "<@U33333333>",
+        },
       ],
     });
+  });
 
-    expect(result.results.map((item) => item.status)).toEqual([
-      "not_found",
-      "not_found",
-      "not_found",
-      "not_found",
-      "not_found",
-      "resolved",
-      "resolved",
-      "not_found",
+  test("deduplicates canonical identities while preserving repeated results", async () => {
+    const calls: ApiCall[] = [];
+    const result = await resolveStrictUserIdentities({
+      client: client(async (method, params) => {
+        calls.push({ method, params });
+        return { user: user("U33333333") };
+      }),
+      identities: ["Alice@Example.com", "alice@example.com", "U33333333", "U33333333"],
+    });
+
+    expect(calls).toEqual([
+      { method: "users.lookupByEmail", params: { email: "alice@example.com" } },
+      { method: "users.info", params: { user: "U33333333" } },
     ]);
-    expect(result.safe_to_mention).toBe(false);
+    expect(result.lookups).toEqual({ status: "complete", requests: 2 });
+    expect(result.safe_to_mention).toBe(true);
+    expect(result.results.map((item) => item.mention)).toEqual([
+      "<@U33333333>",
+      "<@U33333333>",
+      "<@U33333333>",
+      "<@U33333333>",
+    ]);
+  });
+
+  test("verifies an exact browser-search email candidate with users.info", async () => {
+    const calls: ApiCall[] = [];
+    const apiClient = {
+      lookupUserByEmail: async (email: string, edgeCacheId?: string) => {
+        calls.push({ method: "users/search", params: { email, edgeCacheId } });
+        return {
+          results: [
+            user("U33333333", { profile: { email: "person@example.com" } }),
+            user("U44444444", { profile: { email: "another@example.com" } }),
+          ],
+        };
+      },
+      api: async (method: string, params: Record<string, unknown>) => {
+        calls.push({ method, params });
+        return { user: user(String(params.user)) };
+      },
+    } as unknown as SlackApiClient;
+
+    const result = await resolveStrictUserIdentities({
+      client: apiClient,
+      identities: ["person@example.com"],
+      edgeCacheId: "E12345678",
+    });
+
+    expect(calls).toEqual([
+      {
+        method: "users/search",
+        params: { email: "person@example.com", edgeCacheId: "E12345678" },
+      },
+      { method: "users.info", params: { user: "U33333333" } },
+    ]);
+    expect(result).toMatchObject({
+      lookups: { status: "complete", requests: 2 },
+      safe_to_mention: true,
+      results: [{ mention: "<@U33333333>" }],
+    });
+  });
+
+  test("withholds every mention when one direct lookup is not found", async () => {
+    const result = await resolveStrictUserIdentities({
+      client: client(async (method, params) => {
+        if (method === "users.info") {
+          return { user: user(String(params.user)) };
+        }
+        throw new Error("users_not_found");
+      }),
+      identities: ["U11111111", "missing@example.com"],
+    });
+
+    expect(result).toEqual({
+      lookups: { status: "complete", requests: 2 },
+      safe_to_mention: false,
+      results: [
+        {
+          source: "U11111111",
+          status: "resolved",
+          matched_by: ["input.id->slack.id"],
+        },
+        {
+          source: "missing@example.com",
+          status: "not_found",
+          candidate_count: 0,
+        },
+      ],
+    });
     expect(JSON.stringify(result)).not.toContain("<@");
   });
 
-  test("does not trust a syntactically valid user ID absent from the directory", async () => {
-    const { client } = createClient([{ members: [] }]);
-
+  test("recognizes standard-token not-found errors", async () => {
+    const error = Object.assign(new Error("An API error occurred: user_not_found"), {
+      data: { error: "user_not_found" },
+    });
     const result = await resolveStrictUserIdentities({
-      client,
-      identities: ["U99999999"],
+      client: client(async () => {
+        throw error;
+      }),
+      identities: ["U11111111"],
     });
 
-    expect(result.directory.status).toBe("complete");
-    expect(result.results).toEqual([
-      {
-        source: "U99999999",
-        status: "not_found",
-        candidate_count: 0,
-      },
-    ]);
+    expect(result).toEqual({
+      lookups: { status: "complete", requests: 1 },
+      safe_to_mention: false,
+      results: [{ source: "U11111111", status: "not_found", candidate_count: 0 }],
+    });
+  });
+
+  test("rejects inactive users, profile-only users, and bot signals", async () => {
+    const unsafeUsers = [
+      user("U40000001", { deleted: true }),
+      user("U40000002", { is_bot: true }),
+      user("USLACKBOT"),
+      user("U40000003", { profile: { bot_id: "B12345678" } }),
+      user("U40000004", { is_connector_bot: true }),
+      user("U40000005", { is_workflow_bot: true }),
+      user("U40000006", { is_agentforce_bot: true }),
+      user("U40000007", { is_invited_user: true }),
+      user("U40000008", { suspended: true }),
+      user("U40000009", { is_forgotten: true }),
+      user("U40000010", { profile: { is_agentforce_bot: true } }),
+      user("U40000011", { profile: { is_sidekick_bot: true } }),
+      user("U40000012", { suspended: "false" }),
+      user("U40000013", { is_profile_only_user: true }),
+    ];
+    let index = 0;
+    const result = await resolveStrictUserIdentities({
+      client: client(async () => ({ user: unsafeUsers[index++] })),
+      identities: unsafeUsers.map((item) => String(item.id)),
+    });
+
     expect(result.safe_to_mention).toBe(false);
+    expect(result.results.every((item) => item.status === "not_found")).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("<@");
+  });
+
+  test("fails closed on malformed or mismatched users", async () => {
+    const cases: { identity: string; response: Record<string, unknown> }[] = [
+      { identity: "U11111111", response: {} },
+      { identity: "U11111111", response: { user: [] } },
+      { identity: "U11111111", response: { user: user("U22222222") } },
+      {
+        identity: "U11111111",
+        response: { user: { id: "U11111111", deleted: false, is_bot: false } },
+      },
+      { identity: "alice@example.com", response: { user: user("not-a-user-id") } },
+    ];
+
+    for (const { identity, response } of cases) {
+      await expect(
+        resolveStrictUserIdentities({
+          client: client(async () => response),
+          identities: [identity],
+        }),
+      ).resolves.toMatchObject({
+        safe_to_mention: false,
+        results: [{ status: "not_found", candidate_count: 0 }],
+      });
+    }
+  });
+
+  test("rejects unsupported identities before any API call", async () => {
+    let calls = 0;
+    const apiClient = client(async () => {
+      calls += 1;
+      return {};
+    });
+    for (const identity of ["@alice", "Alice Smith", "alice", "u12345678", "<@U12345678>"]) {
+      await expect(
+        resolveStrictUserIdentities({ client: apiClient, identities: [identity] }),
+      ).rejects.toThrow("canonical U/W ID or email");
+    }
+    expect(calls).toBe(0);
+  });
+
+  test("rejects an oversized batch before any API call", async () => {
+    let calls = 0;
+    const apiClient = client(async () => {
+      calls += 1;
+      return {};
+    });
+    const identities = Array.from(
+      { length: MAX_USER_RESOLUTION_IDENTITIES + 1 },
+      (_, index) => `person-${index}@example.com`,
+    );
+
+    await expect(resolveStrictUserIdentities({ client: apiClient, identities })).rejects.toThrow(
+      `At most ${MAX_USER_RESOLUTION_IDENTITIES}`,
+    );
+    expect(calls).toBe(0);
+  });
+
+  test("turns request failures into structured incomplete evidence", async () => {
+    let caught: unknown;
+    try {
+      await resolveStrictUserIdentities({
+        client: client(async () => {
+          throw new Error("Slack API call users.lookupByEmail was rate limited");
+        }),
+        identities: ["alice@example.com"],
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(StrictUserLookupRequestError);
+    const requestError = caught as StrictUserLookupRequestError;
+    expect(requestError.requests).toBe(1);
+    expect(requestError.reason).toBe("rate_limited");
+
+    const output = incompleteStrictUserResolution({
+      requests: requestError.requests,
+      reason: requestError.reason,
+    });
+    expect(output).toEqual({
+      lookups: { status: "incomplete", requests: 1, reason: "rate_limited" },
+      safe_to_mention: false,
+      results: [],
+    });
+    expect(JSON.stringify(output)).not.toContain("<@");
   });
 });

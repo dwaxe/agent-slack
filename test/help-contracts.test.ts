@@ -189,15 +189,13 @@ describe("agent-facing help contracts", () => {
     const resolve = findCommand(buildProgram(), "user", "resolve");
 
     expect(resolve.description()).toContain("active humans");
-    expect(resolve.description()).toContain("complete directory");
+    expect(resolve.description()).toContain("directly");
     expect(resolve.description()).toContain("all-or-none mentions");
     expect(resolve.registeredArguments[0]?.variadic).toBe(true);
     expect(resolve.registeredArguments[0]?.required).toBe(true);
     expect(resolve.registeredArguments[0]?.description).toContain("emails");
-    expect(resolve.registeredArguments[0]?.description).toContain(
-      "full names containing whitespace",
-    );
-    expect(resolve.registeredArguments[0]?.description).toContain("quote in the shell");
+    expect(resolve.registeredArguments[0]?.description).toContain("At most 20");
+    expect(resolve.registeredArguments[0]?.description).toContain("canonical U/W user IDs");
     expect(optionDescription(resolve, "--workspace")).toContain("unique substring");
   });
 

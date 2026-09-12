@@ -16,7 +16,7 @@ agent-slack user resolve \
   --workspace https://workspace.slack.com
 ```
 
-The resolver uses `users.info` or `users.lookupByEmail`; it never calls `users.list`. It emits `<@ID>` tokens only when every input resolves to an active human.
+The resolver accepts at most 20 identities, verifies the authenticated workspace, and uses `users.info` or `users.lookupByEmail`; it never calls `users.list`. It emits `<@ID>` tokens only when every input resolves to an active human.
 
 Names and handles are not accepted by the safe resolver. If only a name or handle is available and no current-task result proves its ID, keep plain text or ask for the Slack ID/email. Never fall back to a directory scan, speculative aliases, or partial mention output.
 

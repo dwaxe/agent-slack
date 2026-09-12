@@ -243,7 +243,7 @@ Common options:
 
 - `agent-slack user list [--workspace <url-or-unique-substring>] [--limit <n>] [--cursor <cursor>] [--include-bots]`
 - `agent-slack user get <U...|@handle|handle> [--workspace <url-or-unique-substring>] [--refresh] [--no-cache]`
-- `agent-slack user resolve <identities...> [--workspace <url-or-unique-substring>]` — verify canonical U/W IDs and emails through direct lookups; emits mentions only when every result is an active human
+- `agent-slack user resolve <identities...> [--workspace <url-or-unique-substring>]` — verify at most 20 canonical U/W IDs or emails through direct lookups; emits mentions only when every result is an active human
 - `agent-slack user dm-open <users...> [--workspace <url-or-unique-substring>]` — get DM or group DM channel ID for one or more users (max 8)
 
 ## User groups

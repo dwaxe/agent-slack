@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import type { CliContext } from "./context.ts";
 import { pruneEmpty } from "../lib/compact-json.ts";
+import type { SlackApiClient } from "../slack/client.ts";
 import { getCachedUserById } from "../slack/user-cache.ts";
 import { isUserId } from "../slack/user-id.ts";
 import { getDmChannelForUsers, getUser, listUsers } from "../slack/users.ts";
@@ -8,8 +9,12 @@ import {
   incompleteStrictUserResolution,
   makeStrictUserOutputInert,
   resolveStrictUserIdentities,
-  StrictUserDirectoryRequestError,
+  StrictUserLookupRequestError,
+  validateStrictUserIdentityBatch,
 } from "../slack/strict-user-resolution.ts";
+
+const SLACK_WORKSPACE_HOST =
+  /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:slack\.com|slack-gov\.com)$/;
 
 export function registerUserCommand(input: { program: Command; ctx: CliContext }): void {
   const userCmd = input.program.command("user").description("Workspace user directory");
@@ -51,30 +56,29 @@ export function registerUserCommand(input: { program: Command; ctx: CliContext }
 
   userCmd
     .command("resolve")
-    .description(
-      "Resolve exact active humans across the complete directory with all-or-none mentions",
-    )
-    .argument(
-      "<identities...>",
-      "User IDs (U.../W...), emails, @handles/handles, or full names containing whitespace (quote in the shell)",
-    )
+    .description("Verify active humans directly with all-or-none mentions")
+    .argument("<identities...>", "At most 20 canonical U/W user IDs or emails")
     .option(
       "--workspace <url>",
       "Workspace selector (full URL or unique substring; required if you have multiple workspaces)",
     )
     .action(async (...args) => {
       const [identities, options] = args as [string[], { workspace?: string }];
-      const workspaceUrl = input.ctx.effectiveWorkspaceUrl(options.workspace);
+      let workspaceUrl: string | undefined;
       let resolvedWorkspaceUrl: string | undefined;
       try {
+        validateStrictUserIdentityBatch(identities);
+        workspaceUrl = input.ctx.effectiveWorkspaceUrl(options.workspace);
         const resolution = await input.ctx.withAutoRefresh({
           workspaceUrl,
           work: async () => {
             const { client, workspace_url } = await input.ctx.getClientForWorkspace(workspaceUrl);
-            resolvedWorkspaceUrl = normalizeWorkspaceUrl(input.ctx, workspace_url);
+            const authenticated = await requireAuthenticatedSlackWorkspace(client, workspace_url);
+            resolvedWorkspaceUrl = authenticated.workspace;
             return await resolveStrictUserIdentities({
               client,
               identities,
+              edgeCacheId: authenticated.edgeCacheId,
             });
           },
         });
@@ -84,9 +88,9 @@ export function registerUserCommand(input: { program: Command; ctx: CliContext }
           process.exitCode = 1;
         }
       } catch (err: unknown) {
-        if (err instanceof StrictUserDirectoryRequestError) {
+        if (err instanceof StrictUserLookupRequestError) {
           const resolution = incompleteStrictUserResolution({
-            pages: err.pages,
+            requests: err.requests,
             reason: err.reason,
           });
           const payload = { workspace: resolvedWorkspaceUrl, ...resolution };
@@ -167,16 +171,48 @@ export function registerUserCommand(input: { program: Command; ctx: CliContext }
     });
 }
 
-function normalizeWorkspaceUrl(
-  ctx: CliContext,
-  workspaceUrl: string | undefined,
-): string | undefined {
-  if (!workspaceUrl) {
-    return undefined;
+function requireSlackWorkspaceOrigin(workspaceUrl: string | undefined): string {
+  const url = workspaceUrl && URL.canParse(workspaceUrl) ? new URL(workspaceUrl) : null;
+  if (
+    !url ||
+    url.protocol !== "https:" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== "" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    !SLACK_WORKSPACE_HOST.test(url.hostname)
+  ) {
+    throw new Error("Resolved workspace is not a canonical Slack origin");
   }
-  try {
-    return ctx.normalizeUrl(workspaceUrl);
-  } catch {
-    return undefined;
+  return url.origin;
+}
+
+async function requireAuthenticatedSlackWorkspace(
+  client: SlackApiClient,
+  configuredWorkspaceUrl: string | undefined,
+): Promise<{ workspace: string; edgeCacheId: string }> {
+  const configuredWorkspace = configuredWorkspaceUrl
+    ? requireSlackWorkspaceOrigin(configuredWorkspaceUrl)
+    : undefined;
+  const auth = await client.api("auth.test", {});
+  const authenticatedWorkspace = requireSlackWorkspaceOrigin(
+    typeof auth.url === "string" ? auth.url : undefined,
+  );
+  if (configuredWorkspace && configuredWorkspace !== authenticatedWorkspace) {
+    throw new Error("Authenticated Slack workspace does not match the selected workspace");
   }
+  const teamId =
+    typeof auth.team_id === "string" && /^T[A-Z0-9]{8,}$/.test(auth.team_id)
+      ? auth.team_id
+      : undefined;
+  const enterpriseId =
+    typeof auth.enterprise_id === "string" && /^E[A-Z0-9]{8,}$/.test(auth.enterprise_id)
+      ? auth.enterprise_id
+      : undefined;
+  const edgeCacheId = enterpriseId ?? teamId;
+  if (!edgeCacheId) {
+    throw new Error("Slack auth.test returned no valid team or enterprise ID");
+  }
+  return { workspace: authenticatedWorkspace, edgeCacheId };
 }

@@ -44,7 +44,7 @@ Message payload fields keep canonical user IDs (for example `author.user_id`, re
 
 Exact-ID `user get` reuses the same cache. Pass `--refresh` to replace that entry or `--no-cache` to avoid reading or writing the cache.
 
-- `user resolve <identities...>` performs live, uncached direct ID/email lookups and reports `safe_to_mention`; it emits `<@U...>` fields only when the entire active-human batch is safe. Otherwise it exits nonzero and emits no live mention token.
+- `user resolve <identities...>` performs live, uncached direct ID/email lookups and reports `lookups: { status, requests }` plus `safe_to_mention`; it emits `<@U...>` fields only when the entire active-human batch is safe. Otherwise it exits nonzero and emits no live mention token.
 
 - `usergroup resolve <groups...>` checks one complete `usergroups.list` snapshot. It emits live `<!subteam^S...>` fields only when every exact ID/handle resolves uniquely to an active group. Missing, ambiguous, inactive, malformed, incomplete, or request-failed batches exit nonzero with no live mention token. `usergroup get` returns one exact active or inactive group without a mention field.
 

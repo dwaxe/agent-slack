@@ -25,7 +25,7 @@ context needs no Slack call.
   channel, or identity evidence across workspaces or broaden DM/private evidence
   without authorization.
 - Never scan the user directory to resolve a mention. Resolve each complete
-  intended batch directly in one workspace: people by canonical ID or email,
+  intended batch directly in one verified workspace: up to 20 people by canonical ID or email,
   and user groups separately by exact ID or handle. Use returned mentions only
   when the whole batch is safe.
 - With `AGENT_SLACK_SAFE_MODE=1` or `--safe-mode`, sends use the draft editor,
