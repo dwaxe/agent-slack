@@ -79,8 +79,10 @@ describe("user resolve command", () => {
     const calls: { method: string; params: Record<string, unknown> }[] = [];
     const client = clientFor(
       [
+        { url: "https://agency.slack-gov.com/" },
         { user: user("U11111111") },
         new Error("invalid_auth"),
+        { url: "https://agency.slack-gov.com/" },
         { user: user("U33333333") },
         { user: user("W22222222") },
       ],
@@ -104,8 +106,10 @@ describe("user resolve command", () => {
     await runResolve(ctx, "alice@example.com", "W22222222");
 
     expect(calls).toEqual([
+      { method: "auth.test", params: {} },
       { method: "users.lookupByEmail", params: { email: "alice@example.com" } },
       { method: "users.info", params: { user: "W22222222" } },
+      { method: "auth.test", params: {} },
       { method: "users.lookupByEmail", params: { email: "alice@example.com" } },
       { method: "users.info", params: { user: "W22222222" } },
     ]);
@@ -128,7 +132,12 @@ describe("user resolve command", () => {
 
   test("withholds mentions for an unsafe direct result", async () => {
     await runResolve(
-      context(clientFor([{ user: user("U11111111", { deleted: true }) }])),
+      context(
+        clientFor([
+          { url: "https://workspace.slack.com/" },
+          { user: user("U11111111", { deleted: true }) },
+        ]),
+      ),
       "U11111111",
     );
 
@@ -142,11 +151,10 @@ describe("user resolve command", () => {
     expect(process.exitCode).toBe(1);
   });
 
-  test("validates the workspace before resolving and uses a fixed generic error", async () => {
+  test("validates a configured workspace before calling Slack", async () => {
     let apiCalls = 0;
     const client = { api: async () => apiCalls++ } as unknown as SlackApiClient;
     const badWorkspaces = [
-      undefined,
       "http://workspace.slack.com",
       "https://collector.example",
       "https://workspace.slack.com/<@U99999999>",
@@ -171,11 +179,68 @@ describe("user resolve command", () => {
     expect(apiCalls).toBe(0);
   });
 
+  test("rejects a selected workspace that does not match auth.test", async () => {
+    const calls: { method: string; params: Record<string, unknown> }[] = [];
+    const client = clientFor([{ url: "https://actual.slack.com/" }], calls);
+
+    await runResolve(
+      context(client, {
+        getClientForWorkspace: async () => ({
+          client,
+          auth: { auth_type: "standard", token: "x" },
+          workspace_url: "https://selected.slack.com",
+        }),
+      }),
+      "U11111111",
+    );
+
+    expect(calls).toEqual([{ method: "auth.test", params: {} }]);
+    expect(logs).toEqual([]);
+    expect(errors).toEqual(["Unable to resolve users safely."]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  test("uses the workspace proven by auth.test when none was configured", async () => {
+    const client = clientFor([{ url: "https://actual.slack.com/" }, { user: user("U11111111") }]);
+
+    await runResolve(
+      context(client, {
+        getClientForWorkspace: async () => ({
+          client,
+          auth: { auth_type: "standard", token: "x" },
+          workspace_url: undefined,
+        }),
+      }),
+      "U11111111",
+    );
+
+    expect(JSON.parse(logs[0]!)).toMatchObject({
+      workspace: "https://actual.slack.com",
+      safe_to_mention: true,
+    });
+    expect(errors).toEqual([]);
+  });
+
   test("rejects names without calling Slack", async () => {
     let apiCalls = 0;
     const client = { api: async () => apiCalls++ } as unknown as SlackApiClient;
 
     await runResolve(context(client), "Alice Smith");
+
+    expect(apiCalls).toBe(0);
+    expect(logs).toEqual([]);
+    expect(errors).toEqual(["Unable to resolve users safely."]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  test("rejects an oversized batch before calling auth.test", async () => {
+    let apiCalls = 0;
+    const client = { api: async () => apiCalls++ } as unknown as SlackApiClient;
+
+    await runResolve(
+      context(client),
+      ...Array.from({ length: 21 }, (_, index) => `person-${index}@example.com`),
+    );
 
     expect(apiCalls).toBe(0);
     expect(logs).toEqual([]);

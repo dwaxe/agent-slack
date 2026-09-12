@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { SlackApiClient } from "../src/slack/client.ts";
-import { resolveStrictUserIdentities } from "../src/slack/strict-user-resolution.ts";
+import {
+  MAX_USER_RESOLUTION_IDENTITIES,
+  resolveStrictUserIdentities,
+} from "../src/slack/strict-user-resolution.ts";
 
 type ApiCall = { method: string; params: Record<string, unknown> };
 
@@ -52,6 +55,31 @@ describe("strict batch user resolution", () => {
         { index: 0, status: "resolved", mention: "<@U11111111>" },
         { index: 1, status: "resolved", mention: "<@W22222222>" },
         { index: 2, status: "resolved", mention: "<@U33333333>" },
+      ],
+    });
+  });
+
+  test("deduplicates canonical identities while preserving repeated results", async () => {
+    const calls: ApiCall[] = [];
+    const result = await resolveStrictUserIdentities({
+      client: client(async (method, params) => {
+        calls.push({ method, params });
+        return { user: user("U33333333") };
+      }),
+      identities: ["Alice@Example.com", "alice@example.com", "U33333333", "U33333333"],
+    });
+
+    expect(calls).toEqual([
+      { method: "users.lookupByEmail", params: { email: "alice@example.com" } },
+      { method: "users.info", params: { user: "U33333333" } },
+    ]);
+    expect(result).toEqual({
+      safe_to_mention: true,
+      results: [
+        { index: 0, status: "resolved", mention: "<@U33333333>" },
+        { index: 1, status: "resolved", mention: "<@U33333333>" },
+        { index: 2, status: "resolved", mention: "<@U33333333>" },
+        { index: 3, status: "resolved", mention: "<@U33333333>" },
       ],
     });
   });
@@ -109,6 +137,7 @@ describe("strict batch user resolution", () => {
       user("U40000010", { profile: { is_agentforce_bot: true } }),
       user("U40000011", { profile: { is_sidekick_bot: true } }),
       user("U40000012", { suspended: "false" }),
+      user("U40000013", { is_profile_only_user: true }),
     ];
     let index = 0;
     const result = await resolveStrictUserIdentities({
@@ -157,6 +186,23 @@ describe("strict batch user resolution", () => {
         resolveStrictUserIdentities({ client: apiClient, identities: [identity] }),
       ).rejects.toThrow("canonical U/W ID or email");
     }
+    expect(calls).toBe(0);
+  });
+
+  test("rejects an oversized batch before any API call", async () => {
+    let calls = 0;
+    const apiClient = client(async () => {
+      calls += 1;
+      return {};
+    });
+    const identities = Array.from(
+      { length: MAX_USER_RESOLUTION_IDENTITIES + 1 },
+      (_, index) => `person-${index}@example.com`,
+    );
+
+    await expect(resolveStrictUserIdentities({ client: apiClient, identities })).rejects.toThrow(
+      `At most ${MAX_USER_RESOLUTION_IDENTITIES}`,
+    );
     expect(calls).toBe(0);
   });
 

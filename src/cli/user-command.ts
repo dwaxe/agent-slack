@@ -5,7 +5,9 @@ import { getDmChannelForUsers, getUser, listUsers } from "../slack/users.ts";
 import {
   resolveStrictUserIdentities,
   type UserResolution,
+  validateStrictUserIdentityBatch,
 } from "../slack/strict-user-resolution.ts";
+import type { SlackApiClient } from "../slack/client.ts";
 
 const USER_RESOLUTION_ERROR = "Unable to resolve users safely.";
 const SLACK_WORKSPACE_HOST =
@@ -60,12 +62,13 @@ export function registerUserCommand(input: { program: Command; ctx: CliContext }
     .action(async (...args) => {
       const [identities, options] = args as [string[], { workspace?: string }];
       try {
+        validateStrictUserIdentityBatch(identities);
         const workspaceUrl = input.ctx.effectiveWorkspaceUrl(options.workspace);
         const output = await input.ctx.withAutoRefresh({
           workspaceUrl,
           work: async () => {
             const { client, workspace_url } = await input.ctx.getClientForWorkspace(workspaceUrl);
-            const workspace = requireSlackWorkspaceOrigin(workspace_url);
+            const workspace = await requireAuthenticatedSlackWorkspace(client, workspace_url);
             const resolution = await resolveStrictUserIdentities({ client, identities });
             return { workspace, resolution };
           },
@@ -141,6 +144,23 @@ function requireSlackWorkspaceOrigin(workspaceUrl: string | undefined): string {
     throw new Error("Resolved workspace is not a canonical Slack origin");
   }
   return workspaceUrl;
+}
+
+async function requireAuthenticatedSlackWorkspace(
+  client: SlackApiClient,
+  configuredWorkspaceUrl: string | undefined,
+): Promise<string> {
+  const configuredWorkspace = configuredWorkspaceUrl
+    ? requireSlackWorkspaceOrigin(configuredWorkspaceUrl)
+    : undefined;
+  const auth = await client.api("auth.test", {});
+  const authenticatedWorkspace = requireSlackWorkspaceOrigin(
+    typeof auth.url === "string" ? auth.url.replace(/\/$/, "") : undefined,
+  );
+  if (configuredWorkspace && configuredWorkspace !== authenticatedWorkspace) {
+    throw new Error("Authenticated Slack workspace does not match the selected workspace");
+  }
+  return authenticatedWorkspace;
 }
 
 function printUserResolution(workspace: string, resolution: UserResolution): void {

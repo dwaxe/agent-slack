@@ -2,7 +2,9 @@ import { isRecord } from "../lib/object-type-guards.ts";
 import type { SlackApiClient } from "./client.ts";
 import { isUserId } from "./user-id.ts";
 
-type Identity = { kind: "id"; value: string } | { kind: "email"; value: string };
+type Identity =
+  | { kind: "id"; value: string; key: string }
+  | { kind: "email"; value: string; key: string };
 
 type ResolutionResult = {
   index: number;
@@ -18,19 +20,24 @@ export type UserResolution = {
 };
 
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+export const MAX_USER_RESOLUTION_IDENTITIES = 20;
+
+export function validateStrictUserIdentityBatch(identities: string[]): void {
+  prepareIdentities(identities);
+}
 
 export async function resolveStrictUserIdentities(input: {
   client: SlackApiClient;
   identities: string[];
 }): Promise<UserResolution> {
-  if (input.identities.length === 0) {
-    throw new Error("At least one user identity is required");
+  const identities = prepareIdentities(input.identities);
+  const uniqueIdentities = new Map<string, Identity>();
+  for (const identity of identities) {
+    uniqueIdentities.set(identity.key, identity);
   }
+  const resultByIdentity = new Map<string, Omit<InternalResult, "index">>();
 
-  const identities = input.identities.map(parseIdentity);
-  const results: InternalResult[] = [];
-
-  for (const [index, identity] of identities.entries()) {
+  for (const identity of uniqueIdentities.values()) {
     let response: Record<string, unknown>;
     try {
       response =
@@ -39,7 +46,7 @@ export async function resolveStrictUserIdentities(input: {
           : await input.client.api("users.lookupByEmail", { email: identity.value });
     } catch (error) {
       if (isNotFoundError(error, identity.kind)) {
-        results.push({ index, status: "unresolved" });
+        resultByIdentity.set(identity.key, { status: "unresolved" });
         continue;
       }
       throw error;
@@ -47,10 +54,19 @@ export async function resolveStrictUserIdentities(input: {
 
     const userId = parseVerifiedUserId(response.user);
     const matchesInput = userId && (identity.kind === "email" || userId === identity.value);
-    results.push(
-      matchesInput ? { index, status: "resolved", userId } : { index, status: "unresolved" },
+    resultByIdentity.set(
+      identity.key,
+      matchesInput ? { status: "resolved", userId } : { status: "unresolved" },
     );
   }
+
+  const results = identities.map((identity, index): InternalResult => {
+    const result = resultByIdentity.get(identity.key);
+    if (!result) {
+      throw new Error("User identity resolution result is missing");
+    }
+    return { index, ...result };
+  });
 
   if (results.every((result) => result.status === "resolved")) {
     return {
@@ -69,13 +85,26 @@ export async function resolveStrictUserIdentities(input: {
   };
 }
 
+function prepareIdentities(inputs: string[]): Identity[] {
+  if (inputs.length === 0) {
+    throw new Error("At least one user identity is required");
+  }
+  if (inputs.length > MAX_USER_RESOLUTION_IDENTITIES) {
+    throw new Error(
+      `At most ${MAX_USER_RESOLUTION_IDENTITIES} user identities may be resolved at once`,
+    );
+  }
+  return inputs.map(parseIdentity);
+}
+
 function parseIdentity(input: string, index: number): Identity {
   const value = input.trim();
   if (isUserId(value)) {
-    return { kind: "id", value };
+    return { kind: "id", value, key: `id:${value}` };
   }
   if (EMAIL_PATTERN.test(value)) {
-    return { kind: "email", value: value.toLowerCase() };
+    const email = value.toLowerCase();
+    return { kind: "email", value: email, key: `email:${email}` };
   }
   throw new Error(`User identity at index ${index} must be a canonical U/W ID or email`);
 }
@@ -97,6 +126,7 @@ function parseVerifiedUserId(value: unknown): string | null {
     value.is_invited_user,
     value.suspended,
     value.is_forgotten,
+    value.is_profile_only_user,
     profile.is_agentforce_bot,
     profile.is_sidekick_bot,
   ];
