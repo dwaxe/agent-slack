@@ -68,9 +68,13 @@ export function registerUserCommand(input: { program: Command; ctx: CliContext }
           workspaceUrl,
           work: async () => {
             const { client, workspace_url } = await input.ctx.getClientForWorkspace(workspaceUrl);
-            const workspace = await requireAuthenticatedSlackWorkspace(client, workspace_url);
-            const resolution = await resolveStrictUserIdentities({ client, identities });
-            return { workspace, resolution };
+            const authenticated = await requireAuthenticatedSlackWorkspace(client, workspace_url);
+            const resolution = await resolveStrictUserIdentities({
+              client,
+              identities,
+              edgeCacheId: authenticated.edgeCacheId,
+            });
+            return { workspace: authenticated.workspace, resolution };
           },
         });
         printUserResolution(output.workspace, output.resolution);
@@ -149,7 +153,7 @@ function requireSlackWorkspaceOrigin(workspaceUrl: string | undefined): string {
 async function requireAuthenticatedSlackWorkspace(
   client: SlackApiClient,
   configuredWorkspaceUrl: string | undefined,
-): Promise<string> {
+): Promise<{ workspace: string; edgeCacheId: string }> {
   const configuredWorkspace = configuredWorkspaceUrl
     ? requireSlackWorkspaceOrigin(configuredWorkspaceUrl)
     : undefined;
@@ -160,7 +164,19 @@ async function requireAuthenticatedSlackWorkspace(
   if (configuredWorkspace && configuredWorkspace !== authenticatedWorkspace) {
     throw new Error("Authenticated Slack workspace does not match the selected workspace");
   }
-  return authenticatedWorkspace;
+  const teamId =
+    typeof auth.team_id === "string" && /^T[A-Z0-9]{8,}$/.test(auth.team_id)
+      ? auth.team_id
+      : undefined;
+  const enterpriseId =
+    typeof auth.enterprise_id === "string" && /^E[A-Z0-9]{8,}$/.test(auth.enterprise_id)
+      ? auth.enterprise_id
+      : undefined;
+  const edgeCacheId = enterpriseId ?? teamId;
+  if (!edgeCacheId) {
+    throw new Error("Slack auth.test returned no valid team or enterprise ID");
+  }
+  return { workspace: authenticatedWorkspace, edgeCacheId };
 }
 
 function printUserResolution(workspace: string, resolution: UserResolution): void {

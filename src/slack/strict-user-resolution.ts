@@ -29,6 +29,7 @@ export function validateStrictUserIdentityBatch(identities: string[]): void {
 export async function resolveStrictUserIdentities(input: {
   client: SlackApiClient;
   identities: string[];
+  edgeCacheId?: string;
 }): Promise<UserResolution> {
   const identities = prepareIdentities(input.identities);
   const uniqueIdentities = new Map<string, Identity>();
@@ -43,7 +44,7 @@ export async function resolveStrictUserIdentities(input: {
       response =
         identity.kind === "id"
           ? await input.client.api("users.info", { user: identity.value })
-          : await input.client.api("users.lookupByEmail", { email: identity.value });
+          : await input.client.lookupUserByEmail(identity.value, input.edgeCacheId);
     } catch (error) {
       if (isNotFoundError(error, identity.kind)) {
         resultByIdentity.set(identity.key, { status: "unresolved" });
@@ -52,12 +53,23 @@ export async function resolveStrictUserIdentities(input: {
       throw error;
     }
 
-    const userId = parseVerifiedUserId(response.user);
-    const matchesInput = userId && (identity.kind === "email" || userId === identity.value);
-    resultByIdentity.set(
-      identity.key,
-      matchesInput ? { status: "resolved", userId } : { status: "unresolved" },
-    );
+    let userId: string | null;
+    if (identity.kind === "email" && Array.isArray(response.results)) {
+      const candidates = parseExactEmailCandidates(response.results, identity.value);
+      if (candidates.length !== 1) {
+        resultByIdentity.set(identity.key, { status: "unresolved" });
+        continue;
+      }
+      const verified = await input.client.api("users.info", { user: candidates[0] });
+      userId = parseVerifiedUserId(verified.user);
+    } else {
+      userId = parseVerifiedUserId(response.user);
+    }
+    if (typeof userId === "string" && (identity.kind === "email" || userId === identity.value)) {
+      resultByIdentity.set(identity.key, { status: "resolved", userId });
+    } else {
+      resultByIdentity.set(identity.key, { status: "unresolved" });
+    }
   }
 
   const results = identities.map((identity, index): InternalResult => {
@@ -138,6 +150,28 @@ function parseVerifiedUserId(value: unknown): string | null {
   }
 
   return id;
+}
+
+function parseExactEmailCandidates(results: unknown[], email: string): string[] {
+  const candidates = new Set<string>();
+  for (const result of results) {
+    if (!isRecord(result) || Array.isArray(result)) {
+      throw new Error("Slack users/search returned a malformed result");
+    }
+    const profile =
+      isRecord(result.profile) && !Array.isArray(result.profile) ? result.profile : null;
+    const resultEmail =
+      profile && typeof profile.email === "string" ? profile.email.trim().toLowerCase() : undefined;
+    if (resultEmail !== email) {
+      continue;
+    }
+    const id = typeof result.id === "string" && isUserId(result.id) ? result.id : null;
+    if (!id) {
+      throw new Error("Slack users/search returned an exact email match without a valid user ID");
+    }
+    candidates.add(id);
+  }
+  return [...candidates];
 }
 
 function isNotFoundError(error: unknown, kind: Identity["kind"]): boolean {

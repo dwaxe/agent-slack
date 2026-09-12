@@ -24,7 +24,10 @@ function user(id: string, fields: Record<string, unknown> = {}): Record<string, 
 function client(
   handler: (method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>,
 ): SlackApiClient {
-  return { api: handler } as unknown as SlackApiClient;
+  return {
+    api: handler,
+    lookupUserByEmail: (email: string) => handler("users.lookupByEmail", { email }),
+  } as unknown as SlackApiClient;
 }
 
 describe("strict batch user resolution", () => {
@@ -81,6 +84,44 @@ describe("strict batch user resolution", () => {
         { index: 2, status: "resolved", mention: "<@U33333333>" },
         { index: 3, status: "resolved", mention: "<@U33333333>" },
       ],
+    });
+  });
+
+  test("verifies an exact browser-search email candidate with users.info", async () => {
+    const calls: ApiCall[] = [];
+    const apiClient = {
+      lookupUserByEmail: async (email: string, edgeCacheId?: string) => {
+        calls.push({ method: "users/search", params: { email, edgeCacheId } });
+        return {
+          ok: true,
+          results: [
+            user("U33333333", { profile: { email: "alice@example.com" } }),
+            user("U44444444", { profile: { email: "someone@example.com" } }),
+          ],
+        };
+      },
+      api: async (method: string, params: Record<string, unknown>) => {
+        calls.push({ method, params });
+        return { user: user(String(params.user)) };
+      },
+    } as unknown as SlackApiClient;
+
+    const result = await resolveStrictUserIdentities({
+      client: apiClient,
+      identities: ["Alice@Example.com"],
+      edgeCacheId: "E12345678",
+    });
+
+    expect(calls).toEqual([
+      {
+        method: "users/search",
+        params: { email: "alice@example.com", edgeCacheId: "E12345678" },
+      },
+      { method: "users.info", params: { user: "U33333333" } },
+    ]);
+    expect(result).toEqual({
+      safe_to_mention: true,
+      results: [{ index: 0, status: "resolved", mention: "<@U33333333>" }],
     });
   });
 

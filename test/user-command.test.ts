@@ -43,15 +43,17 @@ function clientFor(
   responses: Response[],
   calls: { method: string; params: Record<string, unknown> }[] = [],
 ): SlackApiClient {
+  const api = async (method: string, params: Record<string, unknown>) => {
+    calls.push({ method, params });
+    const response = responses.shift();
+    if (!response || response instanceof Error) {
+      throw response ?? new Error("Missing response");
+    }
+    return response;
+  };
   return {
-    api: async (method: string, params: Record<string, unknown>) => {
-      calls.push({ method, params });
-      const response = responses.shift();
-      if (!response || response instanceof Error) {
-        throw response ?? new Error("Missing response");
-      }
-      return response;
-    },
+    api,
+    lookupUserByEmail: (email: string) => api("users.lookupByEmail", { email }),
   } as unknown as SlackApiClient;
 }
 
@@ -79,10 +81,10 @@ describe("user resolve command", () => {
     const calls: { method: string; params: Record<string, unknown> }[] = [];
     const client = clientFor(
       [
-        { url: "https://agency.slack-gov.com/" },
+        { url: "https://agency.slack-gov.com/", team_id: "T11111111" },
         { user: user("U11111111") },
         new Error("invalid_auth"),
-        { url: "https://agency.slack-gov.com/" },
+        { url: "https://agency.slack-gov.com/", team_id: "T11111111" },
         { user: user("U33333333") },
         { user: user("W22222222") },
       ],
@@ -134,7 +136,7 @@ describe("user resolve command", () => {
     await runResolve(
       context(
         clientFor([
-          { url: "https://workspace.slack.com/" },
+          { url: "https://workspace.slack.com/", team_id: "T11111111" },
           { user: user("U11111111", { deleted: true }) },
         ]),
       ),
@@ -181,7 +183,7 @@ describe("user resolve command", () => {
 
   test("rejects a selected workspace that does not match auth.test", async () => {
     const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const client = clientFor([{ url: "https://actual.slack.com/" }], calls);
+    const client = clientFor([{ url: "https://actual.slack.com/", team_id: "T11111111" }], calls);
 
     await runResolve(
       context(client, {
@@ -200,8 +202,23 @@ describe("user resolve command", () => {
     expect(process.exitCode).toBe(1);
   });
 
+  test("rejects auth.test responses without a valid team or enterprise ID", async () => {
+    const calls: { method: string; params: Record<string, unknown> }[] = [];
+    const client = clientFor([{ url: "https://workspace.slack.com/", team_id: "bad" }], calls);
+
+    await runResolve(context(client), "U11111111");
+
+    expect(calls).toEqual([{ method: "auth.test", params: {} }]);
+    expect(logs).toEqual([]);
+    expect(errors).toEqual(["Unable to resolve users safely."]);
+    expect(process.exitCode).toBe(1);
+  });
+
   test("uses the workspace proven by auth.test when none was configured", async () => {
-    const client = clientFor([{ url: "https://actual.slack.com/" }, { user: user("U11111111") }]);
+    const client = clientFor([
+      { url: "https://actual.slack.com/", team_id: "T11111111" },
+      { user: user("U11111111") },
+    ]);
 
     await runResolve(
       context(client, {
