@@ -1,0 +1,42 @@
+name: Rebase Personal Fork
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 15 * * 1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rebase-personal-fork-main
+  cancel-in-progress: false
+
+jobs:
+  rebase:
+    if: github.repository == 'dwaxe/agent-slack'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Configure rebase identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/stablyai/agent-slack.git
+
+      - name: Rebase, validate, and update fork main
+        run: ./scripts/rebase-fork-main.sh --push
+        env:
+          AGENT_SLACK_UPSTREAM_REMOTE: upstream
+          AGENT_SLACK_FORK_REMOTE: origin
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
