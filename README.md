@@ -768,6 +768,33 @@ imported browser credentials cannot edit canvases.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+### Personal fork maintenance
+
+Builds whose version matches `X.Y.Z-dwaxe.N` update only from checksummed binary releases in
+`dwaxe/agent-slack`; standard builds continue to use `stablyai/agent-slack`. Fork builds never
+replace themselves from upstream or publish to the upstream npm package.
+
+The fork's scheduled workflow rebases its linear patch stack onto upstream `main`, validates the
+result in an isolated worktree, saves the old head on a recovery branch, and updates fork `main`
+with an exact force-with-lease. Run the same guarded process locally with:
+
+```bash
+scripts/rebase-fork-main.sh          # validate and retain a local integration branch
+scripts/rebase-fork-main.sh --push   # also update fork/main with an exact lease
+```
+
+After reviewing the rebased fork, validate a new release and then explicitly publish its tag:
+
+```bash
+scripts/release-fork.sh 0.10.2-dwaxe.18
+scripts/release-fork.sh 0.10.2-dwaxe.18 --push
+agent-slack update --check
+agent-slack update
+```
+
+Fork tags are always prereleases. Their build version comes from the tag rather than
+`package.json`, and the release workflow skips npm publication.
+
 ## Check out our other OSS project
 
 [Orca](https://github.com/stablyai/orca) - ADE for 100x builders

@@ -8,7 +8,11 @@ if ! command -v bun >/dev/null 2>&1; then
   exit 1
 fi
 
-version=$(node -p "require('./package.json').version")
+version=${AGENT_SLACK_RELEASE_VERSION:-$(node -p "require('./package.json').version")}
+if ! node -e 'process.exit(require("semver").valid(process.argv[1]) === process.argv[1] ? 0 : 1)' "$version"; then
+  printf '%s\n' "error: invalid release version: $version" >&2
+  exit 1
+fi
 tag="v$version"
 
 outdir="release"
@@ -70,4 +74,3 @@ build "bun-windows-x64" "agent-slack-windows-x64.exe"
 )
 
 printf '%s\n' "Done. Upload assets in $outdir/ to the GitHub release for $tag."
-

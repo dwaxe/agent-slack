@@ -3,6 +3,7 @@ import {
   checkForUpdate,
   detectInstallMethod,
   getUpdateCommand,
+  isUpdateInstallSupported,
   performPackageManagerUpdate,
   performUpdate,
 } from "../lib/update.ts";
@@ -32,7 +33,7 @@ export function registerUpdateCommand(input: { program: Command }): void {
               pruneEmpty({
                 ...result,
                 install_method: method,
-                status: result.self_update_disabled ? "self_update_disabled" : "up_to_date",
+                status: "up_to_date",
               }),
               null,
               2,
@@ -42,18 +43,28 @@ export function registerUpdateCommand(input: { program: Command }): void {
         }
 
         if (options.check) {
+          const updateSupported = isUpdateInstallSupported(result.release_channel, method);
           console.log(
             JSON.stringify(
               pruneEmpty({
                 ...result,
                 install_method: method,
-                update_command: getUpdateCommand(method),
-                status: "update_available",
+                update_supported: updateSupported,
+                update_command: updateSupported ? getUpdateCommand(method) : undefined,
+                status: updateSupported ? "update_available" : "update_requires_binary",
               }),
               null,
               2,
             ),
           );
+          return;
+        }
+
+        if (!isUpdateInstallSupported(result.release_channel, method)) {
+          console.error(
+            "Personal fork updates require the standalone binary install; npm and Bun packages track upstream.",
+          );
+          process.exitCode = 1;
           return;
         }
 
@@ -64,7 +75,7 @@ export function registerUpdateCommand(input: { program: Command }): void {
           process.stderr.write(`Detected install method: ${method}\n`);
           outcome = performPackageManagerUpdate(method);
         } else {
-          outcome = await performUpdate(result.latest);
+          outcome = await performUpdate(result.latest, result.release_repo);
         }
 
         if (!outcome.success) {
