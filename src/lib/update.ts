@@ -3,20 +3,33 @@ import { createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { compare as compareVersions, valid as validVersion } from "semver";
 import { getAppDir } from "./app-dir.ts";
 import { readJsonFile, writeJsonFile } from "./fs.ts";
 import { getPackageVersion } from "./version.ts";
 
-const REPO = "stablyai/agent-slack";
+export const UPSTREAM_RELEASE_REPO = "stablyai/agent-slack";
+export const FORK_RELEASE_REPO = "dwaxe/agent-slack";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DWAXE_VERSION = /^\d+\.\d+\.\d+-dwaxe\.\d+$/;
+
+export type ReleaseChannel = "upstream" | "fork";
+export type ReleaseRepo = typeof UPSTREAM_RELEASE_REPO | typeof FORK_RELEASE_REPO;
+
+export type UpdateSource = {
+  channel: ReleaseChannel;
+  repo: ReleaseRepo;
+};
 
 type UpdateCheckCache = {
   latest_version: string;
+  repo: ReleaseRepo;
   checked_at: number; // epoch ms
 };
 
 type GitHubRelease = {
   tag_name: string;
+  draft?: boolean;
   assets: { name: string; browser_download_url: string }[];
 };
 
@@ -29,36 +42,75 @@ function getCachePath(): string {
  *   negative if a < b, 0 if equal, positive if a > b
  */
 export function compareSemver(a: string, b: string): number {
-  const pa = a.replace(/^v/, "").split(".").map(Number);
-  const pb = b.replace(/^v/, "").split(".").map(Number);
-  for (let i = 0; i < 3; i++) {
-    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (diff !== 0) {
-      return diff;
-    }
+  const left = validVersion(a.replace(/^v/, ""));
+  const right = validVersion(b.replace(/^v/, ""));
+  if (!left || !right) {
+    throw new Error(`Invalid agent-slack version comparison: ${a}, ${b}`);
   }
-  return 0;
+  return compareVersions(left, right);
 }
 
-export function isUpstreamSelfUpdateDisabled(version: string): boolean {
-  return version.includes("-dwaxe.");
+export function isForkBuildVersion(version: string): boolean {
+  const normalized = version.replace(/^v/, "");
+  return DWAXE_VERSION.test(normalized) && validVersion(normalized) !== null;
+}
+
+export function updateSourceForVersion(version: string): UpdateSource {
+  const normalized = version.replace(/^v/, "");
+  if (!validVersion(normalized)) {
+    throw new Error(`Invalid agent-slack version: ${version}`);
+  }
+  if (normalized.includes("-dwaxe.") && !isForkBuildVersion(normalized)) {
+    throw new Error(`Invalid dwaxe fork version: ${version}`);
+  }
+  return isForkBuildVersion(version)
+    ? { channel: "fork", repo: FORK_RELEASE_REPO }
+    : { channel: "upstream", repo: UPSTREAM_RELEASE_REPO };
+}
+
+export function selectLatestReleaseVersion(
+  releases: unknown[],
+  channel: ReleaseChannel,
+): string | null {
+  const versions = releases
+    .map(parseGitHubRelease)
+    .filter((release): release is GitHubRelease => release !== null)
+    .filter((release) => release.draft !== true && hasRequiredAssets(release))
+    .filter((release) => release.tag_name.startsWith("v"))
+    .map((release) => release.tag_name.slice(1))
+    .filter((version) => {
+      if (!validVersion(version)) {
+        return false;
+      }
+      return channel === "fork" ? isForkBuildVersion(version) : !version.includes("-dwaxe.");
+    })
+    .sort((left, right) => compareSemver(right, left));
+  return versions[0] ?? null;
 }
 
 /**
  * Fetch the latest release version from GitHub.
  * Returns null on any network/API error (never throws).
  */
-export async function fetchLatestVersion(): Promise<string | null> {
+export async function fetchLatestVersion(
+  currentVersion = getPackageVersion(),
+): Promise<string | null> {
+  const source = updateSourceForVersion(currentVersion);
+  const path =
+    source.channel === "fork"
+      ? `repos/${source.repo}/releases?per_page=100`
+      : `repos/${source.repo}/releases/latest`;
   try {
-    const resp = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+    const resp = await fetch(`https://api.github.com/${path}`, {
       headers: { Accept: "application/vnd.github+json", "User-Agent": "agent-slack-updater" },
       signal: AbortSignal.timeout(5000),
     });
     if (!resp.ok) {
       return null;
     }
-    const data = (await resp.json()) as GitHubRelease;
-    return data.tag_name?.replace(/^v/, "") ?? null;
+    const data: unknown = await resp.json();
+    const releases = Array.isArray(data) ? data : [data];
+    return selectLatestReleaseVersion(releases, source.channel);
   } catch {
     return null;
   }
@@ -75,33 +127,30 @@ export async function checkForUpdate(force = false): Promise<{
   current: string;
   latest: string;
   update_available: boolean;
-  self_update_disabled?: true;
+  release_channel: ReleaseChannel;
+  release_repo: ReleaseRepo;
 } | null> {
   const current = getPackageVersion();
-
-  // Personal fork builds must never replace themselves with an upstream
-  // release. Upgrade them deliberately from a tested dwaxe/agent-slack build.
-  if (isUpstreamSelfUpdateDisabled(current)) {
-    return {
-      current,
-      latest: current,
-      update_available: false,
-      self_update_disabled: true,
-    };
-  }
+  const source = updateSourceForVersion(current);
 
   if (!force) {
     const cached = await readJsonFile<UpdateCheckCache>(getCachePath());
-    if (cached && Date.now() - cached.checked_at < CHECK_INTERVAL_MS) {
+    if (
+      cached &&
+      cached.repo === source.repo &&
+      Date.now() - cached.checked_at < CHECK_INTERVAL_MS
+    ) {
       return {
         current,
         latest: cached.latest_version,
         update_available: compareSemver(cached.latest_version, current) > 0,
+        release_channel: source.channel,
+        release_repo: source.repo,
       };
     }
   }
 
-  const latest = await fetchLatestVersion();
+  const latest = await fetchLatestVersion(current);
   if (!latest) {
     return null;
   }
@@ -110,6 +159,7 @@ export async function checkForUpdate(force = false): Promise<{
   try {
     await writeJsonFile(getCachePath(), {
       latest_version: latest,
+      repo: source.repo,
       checked_at: Date.now(),
     } satisfies UpdateCheckCache);
   } catch {
@@ -120,10 +170,16 @@ export async function checkForUpdate(force = false): Promise<{
     current,
     latest,
     update_available: compareSemver(latest, current) > 0,
+    release_channel: source.channel,
+    release_repo: source.repo,
   };
 }
 
 export type InstallMethod = "binary" | "npm" | "bun";
+
+export function isUpdateInstallSupported(channel: ReleaseChannel, method: InstallMethod): boolean {
+  return channel === "upstream" || method === "binary";
+}
 
 /**
  * Detect how agent-slack was installed so we can use the right update strategy.
@@ -202,10 +258,21 @@ async function sha256(filePath: string): Promise<string> {
  */
 export async function performUpdate(
   latest: string,
+  repo: ReleaseRepo = UPSTREAM_RELEASE_REPO,
 ): Promise<{ success: boolean; message: string }> {
+  if (repo !== UPSTREAM_RELEASE_REPO && repo !== FORK_RELEASE_REPO) {
+    return { success: false, message: `Unsupported release repository: ${repo}` };
+  }
+  if (validVersion(latest) !== latest) {
+    return { success: false, message: `Invalid agent-slack release version: ${latest}` };
+  }
+  const expectedSource = updateSourceForVersion(latest);
+  if (expectedSource.repo !== repo) {
+    return { success: false, message: `Release ${latest} does not belong to ${repo}` };
+  }
   const asset = detectPlatformAsset();
   const tag = `v${latest}`;
-  const baseUrl = `https://github.com/${REPO}/releases/download/${tag}`;
+  const baseUrl = `https://github.com/${repo}/releases/download/${tag}`;
 
   const tmp = join(tmpdir(), `agent-slack-update-${Date.now()}`);
   await mkdir(tmp, { recursive: true });
@@ -287,6 +354,42 @@ export async function performUpdate(
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+function hasRequiredAssets(release: GitHubRelease): boolean {
+  if (!Array.isArray(release.assets)) {
+    return false;
+  }
+  const names = new Set(release.assets.map((asset) => asset.name));
+  return names.has(detectPlatformAsset()) && names.has("checksums-sha256.txt");
+}
+
+function parseGitHubRelease(value: unknown): GitHubRelease | null {
+  if (!isRecord(value) || typeof value.tag_name !== "string" || !Array.isArray(value.assets)) {
+    return null;
+  }
+  const assets = value.assets.flatMap((asset) => {
+    if (
+      !isRecord(asset) ||
+      typeof asset.name !== "string" ||
+      typeof asset.browser_download_url !== "string"
+    ) {
+      return [];
+    }
+    return [{ name: asset.name, browser_download_url: asset.browser_download_url }];
+  });
+  if (assets.length !== value.assets.length) {
+    return null;
+  }
+  return {
+    tag_name: value.tag_name,
+    draft: typeof value.draft === "boolean" ? value.draft : undefined,
+    assets,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**

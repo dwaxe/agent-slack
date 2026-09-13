@@ -20,13 +20,24 @@ jobs:
         id: meta
         run: |
           TAG="${GITHUB_REF_NAME}"
-          if [[ "$TAG" == *"-rc."* ]]; then
+          VERSION="${TAG#v}"
+          PUBLISH_NPM=false
+          if [[ "$GITHUB_REPOSITORY" == "stablyai/agent-slack" ]]; then
+            PUBLISH_NPM=true
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" == *"-dwaxe."* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=" >> "$GITHUB_OUTPUT"
+            PUBLISH_NPM=false
+          elif [[ "$TAG" == *"-rc."* ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
             echo "npm_tag=rc" >> "$GITHUB_OUTPUT"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
           fi
+          echo "publish_npm=${PUBLISH_NPM}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -63,6 +74,8 @@ jobs:
 
       - name: Build release binaries
         run: bun run build:release
+        env:
+          AGENT_SLACK_RELEASE_VERSION: ${{ steps.meta.outputs.version }}
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
@@ -74,9 +87,11 @@ jobs:
           prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
 
       - name: Build for npm
+        if: steps.meta.outputs.publish_npm == 'true'
         run: bun run build:npm
 
       - name: Publish to npm
+        if: steps.meta.outputs.publish_npm == 'true'
         run: npm publish --provenance --access public --tag ${{ steps.meta.outputs.npm_tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
