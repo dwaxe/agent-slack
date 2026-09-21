@@ -49,7 +49,7 @@ const BLOCKQUOTE_RE = /^> (.*)$/;
  * Parse mrkdwn inline formatting into Slack rich_text inline elements.
  *
  * Handles: *bold*, _italic_, ~strike~, `code`, :emoji:, <url|label>, <url>,
- * and [label](url).
+ * bare HTTP(S) URLs, and [label](url).
  */
 export function parseInlineElements(text: string): InlineElement[] {
   const protectedInline = protectMarkdownInline(text);
@@ -75,6 +75,7 @@ function parseProtectedInlineElements(
       "<!(?<broadcastToken>here|channel|everyone)(?:\\|[^>]*)?>",
       "<(?<linkUrl>[^>|]+)\\|(?<linkText>[^>]+)>",
       "<(?<bareUrl>[^>|]+)>",
+      "(?<plainUrl>[Hh][Tt][Tt][Pp][Ss]?:\\/\\/[^\\s<>]+)",
       "(?:^|(?<=[^A-Za-z0-9_]))@(?<bareUserId>[UWB][A-Z0-9]{6,})\\b",
       "(?:^|(?<=[^A-Za-z0-9_]))@(?<bareBroadcast>here|channel|everyone)\\b",
     ].join("|"),
@@ -108,6 +109,7 @@ function parseProtectedInlineElements(
       linkUrl,
       linkText,
       bareUrl,
+      plainUrl,
       bareUserId,
       bareBroadcast,
     } = groups;
@@ -164,6 +166,10 @@ function parseProtectedInlineElements(
         type: "text",
         text: `<${restoreProtectedMarkdownLiterals(bareUrl, context)}>`,
       });
+    } else if (plainUrl != null) {
+      const { url, trailingText } = splitBareUrlTrailingText(plainUrl);
+      elements.push({ type: "link", url });
+      pushText(trailingText);
     } else if (bareUserId != null) {
       elements.push({ type: "user", user_id: bareUserId });
     } else if (bareBroadcast != null) {
@@ -198,6 +204,37 @@ function escapeRegExp(value: string): string {
 
 function isSlackManualLinkUrl(value: string): boolean {
   return /^(?:https?:\/\/|mailto:)/i.test(value);
+}
+
+function splitBareUrlTrailingText(value: string): { url: string; trailingText: string } {
+  let urlEnd = value.length;
+
+  while (urlEnd > 0) {
+    const candidate = value.slice(0, urlEnd);
+    const lastCharacter = candidate.at(-1)!;
+    if (/[.,!?;:]/.test(lastCharacter)) {
+      urlEnd--;
+      continue;
+    }
+
+    const openingCharacter = ({ ")": "(", "]": "[", "}": "{" } as const)[lastCharacter];
+    if (openingCharacter != null) {
+      const openingCount = countCharacter(candidate, openingCharacter);
+      const closingCount = countCharacter(candidate, lastCharacter);
+      if (closingCount > openingCount) {
+        urlEnd--;
+        continue;
+      }
+    }
+
+    break;
+  }
+
+  return { url: value.slice(0, urlEnd), trailingText: value.slice(urlEnd) };
+}
+
+function countCharacter(value: string, character: string): number {
+  return value.split(character).length - 1;
 }
 
 /**
