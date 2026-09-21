@@ -74,6 +74,29 @@ describe("parseInlineElements", () => {
     ]);
   });
 
+  test("bare HTTP URLs are parsed as links", () => {
+    expect(parseInlineElements("Review https://example.com/pull/42 now")).toEqual([
+      { type: "text", text: "Review " },
+      { type: "link", url: "https://example.com/pull/42" },
+      { type: "text", text: " now" },
+    ]);
+  });
+
+  test("bare URLs exclude sentence punctuation and unmatched closing delimiters", () => {
+    expect(parseInlineElements("See (https://example.com/a_(b)), please.")).toEqual([
+      { type: "text", text: "See (" },
+      { type: "link", url: "https://example.com/a_(b)" },
+      { type: "text", text: ")," },
+      { type: "text", text: " please." },
+    ]);
+  });
+
+  test("bare URLs in code spans remain code", () => {
+    expect(parseInlineElements("`https://example.com/pull/42`")).toEqual([
+      { type: "text", text: "https://example.com/pull/42", style: { code: true } },
+    ]);
+  });
+
   test("Markdown links are parsed as links with text", () => {
     expect(parseInlineElements("Review [PR #42](https://example.com/pull/42)")).toEqual([
       { type: "text", text: "Review " },
@@ -323,9 +346,9 @@ describe("textToRichTextBlocks", () => {
     ]);
   });
 
-  test("Slack manual and Markdown links become link elements in list items", () => {
+  test("Slack manual, Markdown, and bare links become link elements in list items", () => {
     const result = textToRichTextBlocks(
-      "- Review <https://example.com/pull/42|PR #42>\n- Review [PR #43](https://example.com/pull/43)",
+      "- Review <https://example.com/pull/42|PR #42>\n- Review [PR #43](https://example.com/pull/43)\n- Review https://example.com/pull/44",
     )!;
     const list = result[0]!.elements.find((e) => e.type === "rich_text_list") as {
       elements: { elements: unknown[] }[];
@@ -337,6 +360,10 @@ describe("textToRichTextBlocks", () => {
     expect(list.elements[1]!.elements).toEqual([
       { type: "text", text: "Review " },
       { type: "link", url: "https://example.com/pull/43", text: "PR #43" },
+    ]);
+    expect(list.elements[2]!.elements).toEqual([
+      { type: "text", text: "Review " },
+      { type: "link", url: "https://example.com/pull/44" },
     ]);
   });
 

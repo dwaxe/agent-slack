@@ -658,6 +658,45 @@ describe("sendMessage", () => {
     ]);
   });
 
+  test("converts bare URLs in list messages to rich-text link blocks", async () => {
+    const calls: { method: string; params: Record<string, unknown> }[] = [];
+    const ctx = createContext(calls);
+
+    await sendMessage({
+      ctx,
+      targetInput: "C12345678",
+      text: "I got another PR in: https://example.com/pull/42\n\n- Passenger one",
+      options: {},
+    });
+
+    expect(calls[0]?.method).toBe("chat.postMessage");
+    expect(calls[0]?.params.blocks).toEqual([
+      {
+        type: "rich_text",
+        elements: [
+          {
+            type: "rich_text_section",
+            elements: [
+              { type: "text", text: "I got another PR in: " },
+              { type: "link", url: "https://example.com/pull/42" },
+              { type: "text", text: "\n" },
+            ],
+          },
+          {
+            type: "rich_text_list",
+            style: "bullet",
+            elements: [
+              {
+                type: "rich_text_section",
+                elements: [{ type: "text", text: "Passenger one" }],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
   test("--blocks: errors when an array element is not an object", async () => {
     const calls: { method: string; params: Record<string, unknown> }[] = [];
     const ctx = createContext(calls);
