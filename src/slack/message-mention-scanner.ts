@@ -20,7 +20,7 @@ const RICH_TEXT_LEAF_KEYS: Record<string, ReadonlySet<string>> = {
   link: new Set(["type", "url", "text", "unsafe", "truncated", "style"]),
   team: new Set(["type", "team_id", "style"]),
   text: new Set(["type", "text", "style"]),
-  user: new Set(["type", "user_id", "style"]),
+  user: new Set(["type", "user_id", "style", "from_llm"]),
   usergroup: new Set(["type", "usergroup_id", "style"]),
 };
 
@@ -171,6 +171,9 @@ function collectRichTextInlineElement(
   }
   validateRichTextStyle(value.style, state);
   if (value.type === "user") {
+    if (value.from_llm !== undefined && typeof value.from_llm !== "boolean") {
+      markMentionScanIncomplete(state);
+    }
     const userId = typeof value.user_id === "string" ? value.user_id : "";
     if (isMentionUserId(userId)) {
       if (includeMentions) {

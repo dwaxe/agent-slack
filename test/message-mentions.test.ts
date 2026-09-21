@@ -193,6 +193,68 @@ describe("compact message notification mentions", () => {
     });
   });
 
+  test("accepts boolean LLM provenance on structured user mentions", () => {
+    const humanAuthored = compact({
+      text: "Ping <@U11111111>",
+      blocks: [
+        {
+          type: "rich_text",
+          elements: [
+            {
+              type: "rich_text_section",
+              elements: [{ type: "user", user_id: "U11111111", from_llm: false }],
+            },
+          ],
+        },
+      ],
+    });
+    const llmAuthored = compact({
+      blocks: [
+        {
+          type: "rich_text",
+          elements: [
+            {
+              type: "rich_text_section",
+              elements: [{ type: "user", user_id: "W22222222", from_llm: true }],
+            },
+          ],
+        },
+      ],
+    });
+    const malformed = compact({
+      blocks: [
+        {
+          type: "rich_text",
+          elements: [
+            {
+              type: "rich_text_section",
+              elements: [{ type: "user", user_id: "U33333333", from_llm: "false" }],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(humanAuthored.mention_evidence).toEqual({
+      schema: 2,
+      complete: true,
+      user_ids: ["U11111111"],
+      usergroup_ids: [],
+    });
+    expect(llmAuthored.mention_evidence).toEqual({
+      schema: 2,
+      complete: true,
+      user_ids: ["W22222222"],
+      usergroup_ids: [],
+    });
+    expect(malformed.mention_evidence).toEqual({
+      schema: 2,
+      complete: false,
+      user_ids: ["U33333333"],
+      usergroup_ids: [],
+    });
+  });
+
   test("excludes structural mentions in rich-text code and quotes", () => {
     const message = compact({
       blocks: [
