@@ -2,7 +2,7 @@
 
 ## Output format
 
-Slack data commands print JSON to stdout. Help, update, and some authentication setup commands print text instead.
+Slack data commands print JSON to stdout. Help and some authentication setup commands print text instead.
 
 - Empty values are pruned (`null`, `[]`, `{}` are removed where possible).
 - `auth whoami` redacts secrets in its output.

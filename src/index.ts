@@ -7,13 +7,11 @@ import { registerMessageCommand } from "./cli/message-command.ts";
 import { registerSearchCommand } from "./cli/search-command.ts";
 import { registerLaterCommand } from "./cli/later-command.ts";
 import { registerUnreadsCommand } from "./cli/unreads-command.ts";
-import { registerUpdateCommand } from "./cli/update-command.ts";
 import { registerUserCommand } from "./cli/user-command.ts";
 import { registerUserGroupCommand } from "./cli/usergroup-command.ts";
 import { registerChannelCommand } from "./cli/channel-command.ts";
 import { registerWorkflowCommand } from "./cli/workflow-command.ts";
 import { registerThreadCommand } from "./cli/thread-command.ts";
-import { backgroundUpdateCheck } from "./lib/update.ts";
 import { commandTimeoutMs, shouldStartCommandWatchdog } from "./cli/command-watchdog.ts";
 
 const program = new Command();
@@ -51,7 +49,6 @@ registerCanvasCommand({ program, ctx });
 registerSearchCommand({ program, ctx });
 registerLaterCommand({ program, ctx });
 registerUnreadsCommand({ program, ctx });
-registerUpdateCommand({ program });
 registerUserCommand({ program, ctx });
 registerUserGroupCommand({ program, ctx });
 registerChannelCommand({ program, ctx });
@@ -61,11 +58,4 @@ registerThreadCommand({ program, ctx });
 program.parse(process.argv);
 if (!process.argv.slice(2).length) {
   program.outputHelp();
-}
-
-// Fire-and-forget background update check (throttled to once/24h, stderr only).
-// Skip for the update command itself to avoid duplicate output.
-const [subcommand] = process.argv.slice(2);
-if (subcommand && subcommand !== "update") {
-  backgroundUpdateCheck();
 }

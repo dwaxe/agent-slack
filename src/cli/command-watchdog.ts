@@ -19,7 +19,7 @@ export function commandTimeoutMs(args: string[], env: NodeJS.ProcessEnv = proces
 
 export function shouldStartCommandWatchdog(args: string[]): boolean {
   const [command, subcommand] = args;
-  if (!command || command === "update") {
+  if (!command) {
     return false;
   }
   if (command === "message" && subcommand === "draft") {

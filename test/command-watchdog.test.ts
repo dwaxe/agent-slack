@@ -10,10 +10,8 @@ describe("command watchdog", () => {
 
   test("preserves existing watchdog behavior for other command paths", () => {
     expect(shouldStartCommandWatchdog(["message", "draft", "list"])).toBe(false);
-    expect(shouldStartCommandWatchdog(["update"])).toBe(false);
     expect(shouldStartCommandWatchdog(["user", "get", "@alice"])).toBe(true);
     expect(shouldStartCommandWatchdog(["--safe-mode", "message", "draft", "list"])).toBe(true);
-    expect(shouldStartCommandWatchdog(["--safe-mode", "update"])).toBe(true);
   });
 
   test("allows the bounded own-message export window", () => {

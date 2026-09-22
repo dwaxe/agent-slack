@@ -65,7 +65,6 @@ bash ./scripts/install-skill.sh
 
 ```text
 agent-slack
-├── update                         # self-update (detects npm/bun/binary)
 ├── auth
 │   ├── whoami
 │   ├── test
@@ -123,7 +122,7 @@ agent-slack
 
 Notes:
 
-- Slack data commands output aggressively pruned JSON (`null`/empty fields removed); help, update, and some authentication setup commands output text.
+- Slack data commands output aggressively pruned JSON (`null`/empty fields removed); help and some authentication setup commands output text.
 - Attached files are auto-downloaded by default and returned as absolute local paths.
 
 ## Authentication (no fancy setup)
@@ -770,9 +769,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Personal fork maintenance
 
-Builds whose version matches `X.Y.Z-dwaxe.N` update only from checksummed binary releases in
-`dwaxe/agent-slack`; standard builds continue to use `stablyai/agent-slack`. Fork builds never
-replace themselves from upstream or publish to the upstream npm package.
+Personal fork binaries are distributed only through checksummed releases in
+`dwaxe/agent-slack`. Managed machines install an exact release through chezmoi; the CLI does not
+select or install updates. Fork releases never publish to the upstream npm package.
 
 The fork's scheduled workflow rebases its linear patch stack onto upstream `main`, validates the
 result in an isolated worktree, saves the old head on a recovery branch, and updates fork `main`
@@ -783,17 +782,18 @@ scripts/rebase-fork-main.sh          # validate and retain a local integration b
 scripts/rebase-fork-main.sh --push   # also update fork/main with an exact lease
 ```
 
-After reviewing the rebased fork, validate a new release and then explicitly publish its tag:
+After reviewing the rebased fork, validate a new release and then explicitly publish its tag.
+Both the release command and GitHub release job refuse to proceed unless the tag points to the
+exact fork `main` head and that head contains the current upstream `main`:
 
 ```bash
 scripts/release-fork.sh 0.10.2-dwaxe.18
 scripts/release-fork.sh 0.10.2-dwaxe.18 --push
-agent-slack update --check
-agent-slack update
 ```
 
 Fork tags are always prereleases. Their build version comes from the tag rather than
-`package.json`, and the release workflow skips npm publication.
+`package.json`, and the release workflow skips npm publication. Promote a release to managed
+machines by updating the exact tag, source commit, and checksums in chezmoi.
 
 ## Check out our other OSS project
 

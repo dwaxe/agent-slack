@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 fork_remote="${AGENT_SLACK_FORK_REMOTE:-fork}"
+upstream_remote="${AGENT_SLACK_UPSTREAM_REMOTE:-origin}"
 fork_owner="${AGENT_SLACK_FORK_GH_USER:-dwaxe}"
 version="${1:-}"
 publish="${2:-}"
@@ -12,10 +13,10 @@ usage() {
   cat <<'EOF'
 Usage: scripts/release-fork.sh <X.Y.Z-dwaxe.N> [--push]
 
-Validate a fork release from the exact remote fork/main head. Without --push,
-perform checks only. With --push, create and publish an annotated version tag;
-the release workflow builds checksummed binaries using that tag version and
-never publishes personal fork tags to npm.
+Validate a fork release from the exact remote fork/main head rebased onto the
+current upstream main. Without --push, perform checks only. With --push, create
+and publish an annotated version tag; the release workflow builds checksummed
+binaries using that tag version and never publishes personal fork tags to npm.
 EOF
 }
 
@@ -41,6 +42,18 @@ case "$fork_url" in
   "https://github.com/dwaxe/agent-slack"|"https://github.com/dwaxe/agent-slack.git"|"git@github.com:dwaxe/agent-slack"|"git@github.com:dwaxe/agent-slack.git") ;;
   *)
     printf 'error: remote %s must target github.com/dwaxe/agent-slack\n' "$fork_remote" >&2
+    exit 1
+    ;;
+esac
+if [[ ! "$upstream_remote" =~ ^[A-Za-z0-9._-]+$ ]] || ! git remote get-url "$upstream_remote" >/dev/null 2>&1; then
+  printf 'error: required upstream remote is unavailable: %s\n' "$upstream_remote" >&2
+  exit 1
+fi
+upstream_url="$(git remote get-url "$upstream_remote")"
+case "$upstream_url" in
+  "https://github.com/stablyai/agent-slack"|"https://github.com/stablyai/agent-slack.git"|"git@github.com:stablyai/agent-slack"|"git@github.com:stablyai/agent-slack.git") ;;
+  *)
+    printf 'error: remote %s must target github.com/stablyai/agent-slack\n' "$upstream_remote" >&2
     exit 1
     ;;
 esac
@@ -79,10 +92,17 @@ push_to_fork() {
 }
 
 git fetch "$fork_remote" main --tags
+git fetch "$upstream_remote" main
 fork_head="$(git rev-parse "$fork_remote/main^{commit}")"
+upstream_head="$(git rev-parse "$upstream_remote/main^{commit}")"
 current_head="$(git rev-parse HEAD)"
 if [[ "$current_head" != "$fork_head" ]]; then
   printf 'error: HEAD must equal the current fork/main head (%s)\n' "$fork_head" >&2
+  exit 1
+fi
+if ! git merge-base --is-ancestor "$upstream_head" "$fork_head"; then
+  printf 'error: fork/main is not rebased onto current upstream main (%s)\n' "$upstream_head" >&2
+  printf '%s\n' 'run scripts/rebase-fork-main.sh before releasing' >&2
   exit 1
 fi
 

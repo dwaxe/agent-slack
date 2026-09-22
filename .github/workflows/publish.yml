@@ -15,6 +15,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify personal fork release source
+        if: contains(github.ref_name, '-dwaxe.')
+        run: |
+          git fetch origin main:refs/remotes/origin/main
+          git fetch https://github.com/stablyai/agent-slack.git main:refs/remotes/upstream/main
+          release_head="$(git rev-parse HEAD^{commit})"
+          fork_head="$(git rev-parse refs/remotes/origin/main^{commit})"
+          upstream_head="$(git rev-parse refs/remotes/upstream/main^{commit})"
+          test "$release_head" = "$fork_head" || {
+            echo "fork release tag must point to current fork/main" >&2
+            exit 1
+          }
+          git merge-base --is-ancestor "$upstream_head" "$release_head" || {
+            echo "fork/main must be rebased onto current upstream main" >&2
+            exit 1
+          }
 
       - name: Detect release type
         id: meta
