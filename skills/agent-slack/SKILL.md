@@ -19,15 +19,20 @@ context needs no Slack call.
   DM changes, Later, canvases, thread subscriptions, and workflows. Workflow
   runs may execute downstream actions.
 - Before a human-facing send or edit, show the exact workspace, target, action,
-  and final payload and obtain approval. Any target or payload change invalidates
-  that approval. Treat `message compose` as a send.
+  and final Slack-visible content and obtain approval. In drafts, approval
+  prompts, and delivery summaries, render verified mentions as readable Slack
+  usernames or handles; keep raw mention markup such as `<@U...>` and
+  `<!subteam^S...>` internal unless the user asks to see it. Any target, visible
+  content, resolved recipient, or other payload change invalidates that
+  approval. Treat `message compose` as a send.
 - Pin one workspace and prefer exact permalinks. Never combine message, search,
   channel, or identity evidence across workspaces or broaden DM/private evidence
   without authorization.
 - Never scan the user directory to resolve a mention. Resolve each complete
-  intended batch directly in one verified workspace: up to 20 people by canonical ID or email,
-  and user groups separately by exact ID or handle. Use returned mentions only
-  when the whole batch is safe.
+  intended batch directly in one workspace: people by canonical ID or email,
+  and user groups separately by exact ID or handle. A loaded workflow may
+  instead supply an exact person ID from its checked-in, tested
+  `trusted_static` identity map for that workspace. Use no partial batch.
 - With `AGENT_SLACK_SAFE_MODE=1` or `--safe-mode`, sends use the draft editor,
   CI compose is blocked, and edits and deletes are blocked.
 - Do not mutate Jira, code review, CI, rollout, or another linked system unless
@@ -57,10 +62,8 @@ The first command identifies the focal message; the second returns its thread.
 - [references/mentions.md](references/mentions.md): any person or user-group
   notification
 - [references/commands.md](references/commands.md): authentication recovery,
-  unfamiliar flags, and non-message features; skip for routine get/list
+  unfamiliar flags, and non-message features
 - [references/targets.md](references/targets.md): channel/timestamp targeting or
   multi-workspace ambiguity
 - [references/output.md](references/output.md): exact JSON fields, receipts,
   scheduled/draft/canvas/thread results, caches, and downloads when unclear
-
-Do not load every reference merely because a command returns JSON.
