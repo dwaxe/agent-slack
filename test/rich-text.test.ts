@@ -97,45 +97,14 @@ describe("parseInlineElements", () => {
     ]);
   });
 
-  test("Markdown links are parsed as links with text", () => {
-    expect(parseInlineElements("Review [PR #42](https://example.com/pull/42)")).toEqual([
-      { type: "text", text: "Review " },
-      { type: "link", url: "https://example.com/pull/42", text: "PR #42" },
-    ]);
-  });
-
-  test("Markdown links inside emphasis retain the emphasis", () => {
-    expect(parseInlineElements("*Review [PR](https://e.test)*")).toEqual([
+  test("Slack links inside emphasis retain the emphasis", () => {
+    expect(parseInlineElements("*Review <https://e.test|PR>*")).toEqual([
       { type: "text", text: "Review ", style: { bold: true } },
       { type: "link", url: "https://e.test", text: "PR", style: { bold: true } },
     ]);
   });
 
-  test("multi-backtick code spans keep Markdown links as code", () => {
-    expect(parseInlineElements("``foo ` [link](https://e.test)``")).toEqual([
-      { type: "text", text: "foo ` [link](https://e.test)", style: { code: true } },
-    ]);
-  });
-
-  test("backslashes before closing backtick runs stay inside code spans", () => {
-    expect(parseInlineElements("`[link](https://e.test)\\`")).toEqual([
-      { type: "text", text: "[link](https://e.test)\\", style: { code: true } },
-    ]);
-  });
-
-  test("Markdown links support uppercase schemes and nested labels", () => {
-    expect(parseInlineElements("[A \\] [nested]](HTTPS://E.TEST)")).toEqual([
-      { type: "link", url: "https://E.TEST", text: "A ] [nested]" },
-    ]);
-  });
-
-  test("Markdown links support escaped punctuation in schemes", () => {
-    expect(parseInlineElements("[Email](mailto\\:x@e.test)")).toEqual([
-      { type: "link", url: "mailto:x@e.test", text: "Email" },
-    ]);
-  });
-
-  test("Slack link labels do not expose protected inline markers", () => {
+  test("Slack link labels preserve backticks literally", () => {
     expect(parseInlineElements("<https://e.test|`code`>")).toEqual([
       { type: "link", url: "https://e.test", text: "`code`" },
     ]);
@@ -346,9 +315,9 @@ describe("textToRichTextBlocks", () => {
     ]);
   });
 
-  test("Slack manual, Markdown, and bare links become link elements in list items", () => {
+  test("Slack links and bare URLs become link elements in list items", () => {
     const result = textToRichTextBlocks(
-      "- Review <https://example.com/pull/42|PR #42>\n- Review [PR #43](https://example.com/pull/43)\n- Review https://example.com/pull/44",
+      "- Review <https://example.com/pull/42|PR #42>\n- Review https://example.com/pull/44",
     )!;
     const list = result[0]!.elements.find((e) => e.type === "rich_text_list") as {
       elements: { elements: unknown[] }[];
@@ -359,16 +328,12 @@ describe("textToRichTextBlocks", () => {
     ]);
     expect(list.elements[1]!.elements).toEqual([
       { type: "text", text: "Review " },
-      { type: "link", url: "https://example.com/pull/43", text: "PR #43" },
-    ]);
-    expect(list.elements[2]!.elements).toEqual([
-      { type: "text", text: "Review " },
       { type: "link", url: "https://example.com/pull/44" },
     ]);
   });
 
-  test("links inside emphasized list items retain the emphasis", () => {
-    const result = textToRichTextBlocks("- *Review [PR](https://e.test)*")!;
+  test("Slack links inside emphasized list items retain the emphasis", () => {
+    const result = textToRichTextBlocks("- *Review <https://e.test|PR>*")!;
     const list = result[0]!.elements.find((e) => e.type === "rich_text_list") as {
       elements: { elements: unknown[] }[];
     };
@@ -378,27 +343,19 @@ describe("textToRichTextBlocks", () => {
     ]);
   });
 
-  test("multi-backtick code spans in list items do not activate links", () => {
-    const result = textToRichTextBlocks("- ``foo ` [link](https://e.test)``")!;
+  test("Markdown-style links remain visibly literal in list items", () => {
+    const result = textToRichTextBlocks("- Review [PR](https://e.test)")!;
     const list = result[0]!.elements.find((e) => e.type === "rich_text_list") as {
       elements: { elements: unknown[] }[];
     };
     expect(list.elements[0]!.elements).toEqual([
-      { type: "text", text: "foo ` [link](https://e.test)", style: { code: true } },
+      { type: "text", text: "Review [PR](" },
+      { type: "link", url: "https://e.test" },
+      { type: "text", text: ")" },
     ]);
   });
 
-  test("backslashes before code-span closers do not activate links in list items", () => {
-    const result = textToRichTextBlocks("- `[link](https://e.test)\\`")!;
-    const list = result[0]!.elements.find((e) => e.type === "rich_text_list") as {
-      elements: { elements: unknown[] }[];
-    };
-    expect(list.elements[0]!.elements).toEqual([
-      { type: "text", text: "[link](https://e.test)\\", style: { code: true } },
-    ]);
-  });
-
-  test("Slack link labels in list items do not expose protected inline markers", () => {
+  test("Slack link labels in list items preserve backticks literally", () => {
     const result = textToRichTextBlocks("- <https://e.test|`code`>")!;
     const list = result[0]!.elements.find((e) => e.type === "rich_text_list") as {
       elements: { elements: unknown[] }[];

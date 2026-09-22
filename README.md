@@ -352,7 +352,7 @@ agent-slack message edit "#general" "Updated text" --workspace "myteam" --ts "17
 agent-slack message delete "#general" --workspace "myteam" --ts "1770165109.628379"
 ```
 
-`message edit` and ordinary `message send` calls normalize links and convert bullet/numbered lists to Slack native rich text. `message send --blocks` uses the supplied blocks instead, while `message send --attach` sends its initial comment as plain text without automatic list conversion. Links may be bare HTTP(S) URLs or use Markdown (`[PR #42](https://example.com/pull/42)`) or Slack (`<https://example.com/pull/42|PR #42>`) syntax. Inside auto-converted lists, links, inline mentions, broadcasts, emoji shortcodes, and `<#C...>` channel references become Slack elements.
+`message edit` and ordinary `message send` calls convert bullet/numbered lists to Slack native rich text. `message send --blocks` uses the supplied blocks instead, while `message send --attach` sends its initial comment as plain text without automatic list conversion. Links may be bare HTTP(S) URLs or use Slack syntax (`<https://example.com/pull/42|PR #42>`). Markdown-style links (`[PR #42](https://example.com/pull/42)`) are sent literally and produce a warning. Inside auto-converted lists, links, inline mentions, broadcasts, emoji shortcodes, and `<#C...>` channel references become Slack elements.
 
 Send options for `message send`:
 

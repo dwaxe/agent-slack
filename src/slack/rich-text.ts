@@ -1,9 +1,3 @@
-import {
-  protectMarkdownInline,
-  restoreProtectedMarkdownLiterals,
-  type ProtectedMarkdownInline,
-} from "./markdown-inline.ts";
-
 type InlineStyle = { bold?: true; italic?: true; strike?: true; code?: true };
 
 type InlineElement =
@@ -49,38 +43,12 @@ const BLOCKQUOTE_RE = /^> (.*)$/;
  * Parse mrkdwn inline formatting into Slack rich_text inline elements.
  *
  * Handles: *bold*, _italic_, ~strike~, `code`, :emoji:, <url|label>, <url>,
- * bare HTTP(S) URLs, and [label](url).
+ * and bare HTTP(S) URLs.
  */
 export function parseInlineElements(text: string): InlineElement[] {
-  const protectedInline = protectMarkdownInline(text);
-  return parseProtectedInlineElements(protectedInline.text, protectedInline);
-}
-
-function parseProtectedInlineElements(
-  text: string,
-  context: ProtectedMarkdownInline,
-): InlineElement[] {
-  const { tokens, marker, suffix } = context;
   const elements: InlineElement[] = [];
-  const re = new RegExp(
-    [
-      `${escapeRegExp(marker)}(?<protectedTokenIndex>\\d+)${escapeRegExp(suffix)}`,
-      "(?:^|(?<=[^A-Za-z0-9_])):(?<emojiName>[a-zA-Z0-9_+-]+):(?![A-Za-z0-9_+-])",
-      "\\*(?<bold>[^*]+)\\*",
-      "_(?<italic>[^_]+)_",
-      "~(?<strike>[^~]+)~",
-      "<@(?<userToken>[UWB][A-Z0-9]+)(?:\\|[^>]*)?>",
-      "<#(?<channelToken>[CG][A-Z0-9]+)(?:\\|[^>]*)?>",
-      "<!subteam\\^(?<usergroupToken>[A-Z0-9]+)(?:\\|[^>]*)?>",
-      "<!(?<broadcastToken>here|channel|everyone)(?:\\|[^>]*)?>",
-      "<(?<linkUrl>[^>|]+)\\|(?<linkText>[^>]+)>",
-      "<(?<bareUrl>[^>|]+)>",
-      "(?<plainUrl>[Hh][Tt][Tt][Pp][Ss]?:\\/\\/[^\\s<>]+)",
-      "(?:^|(?<=[^A-Za-z0-9_]))@(?<bareUserId>[UWB][A-Z0-9]{6,})\\b",
-      "(?:^|(?<=[^A-Za-z0-9_]))@(?<bareBroadcast>here|channel|everyone)\\b",
-    ].join("|"),
-    "g",
-  );
+  const re =
+    /`(?<code>[^`]+)`|(?:^|(?<=[^A-Za-z0-9_])):(?<emojiName>[a-zA-Z0-9_+-]+):(?![A-Za-z0-9_+-])|\*(?<bold>[^*]+)\*|_(?<italic>[^_]+)_|~(?<strike>[^~]+)~|<@(?<userToken>[UWB][A-Z0-9]+)(?:\|[^>]*)?>|<#(?<channelToken>[CG][A-Z0-9]+)(?:\|[^>]*)?>|<!subteam\^(?<usergroupToken>[A-Z0-9]+)(?:\|[^>]*)?>|<!(?<broadcastToken>here|channel|everyone)(?:\|[^>]*)?>|<(?<linkUrl>[^>|]+)\|(?<linkText>[^>]+)>|<(?<bareUrl>[^>|]+)>|(?<plainUrl>[Hh][Tt][Tt][Pp][Ss]?:\/\/[^\s<>]+)|(?:^|(?<=[^A-Za-z0-9_]))@(?<bareUserId>[UWB][A-Z0-9]{6,})\b|(?:^|(?<=[^A-Za-z0-9_]))@(?<bareBroadcast>here|channel|everyone)\b/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -97,7 +65,7 @@ function parseProtectedInlineElements(
 
     const groups = match.groups ?? {};
     const {
-      protectedTokenIndex,
+      code,
       emojiName,
       bold,
       italic,
@@ -113,27 +81,16 @@ function parseProtectedInlineElements(
       bareUserId,
       bareBroadcast,
     } = groups;
-    if (protectedTokenIndex != null) {
-      const token = tokens[Number(protectedTokenIndex)]!;
-      if (token.type === "code") {
-        elements.push({ type: "text", text: token.content, style: { code: true } });
-      } else {
-        elements.push({ type: "link", url: token.url, text: token.label });
-      }
+    if (code != null) {
+      elements.push({ type: "text", text: code, style: { code: true } });
     } else if (emojiName != null) {
       elements.push({ type: "emoji", name: emojiName });
     } else if (bold != null) {
-      elements.push(
-        ...applyInlineStyle(parseProtectedInlineElements(bold, context), { bold: true }),
-      );
+      elements.push(...applyInlineStyle(parseInlineElements(bold), { bold: true }));
     } else if (italic != null) {
-      elements.push(
-        ...applyInlineStyle(parseProtectedInlineElements(italic, context), { italic: true }),
-      );
+      elements.push(...applyInlineStyle(parseInlineElements(italic), { italic: true }));
     } else if (strike != null) {
-      elements.push(
-        ...applyInlineStyle(parseProtectedInlineElements(strike, context), { strike: true }),
-      );
+      elements.push(...applyInlineStyle(parseInlineElements(strike), { strike: true }));
     } else if (userToken != null) {
       elements.push({ type: "user", user_id: userToken });
     } else if (channelToken != null) {
@@ -146,26 +103,13 @@ function parseProtectedInlineElements(
         range: broadcastToken as "here" | "channel" | "everyone",
       });
     } else if (linkUrl != null && linkText != null && isSlackManualLinkUrl(linkUrl)) {
-      elements.push({
-        type: "link",
-        url: restoreProtectedMarkdownLiterals(linkUrl, context),
-        text: restoreProtectedMarkdownLiterals(linkText, context),
-      });
+      elements.push({ type: "link", url: linkUrl, text: linkText });
     } else if (linkUrl != null && linkText != null) {
-      elements.push({
-        type: "text",
-        text: `<${restoreProtectedMarkdownLiterals(linkUrl, context)}|${restoreProtectedMarkdownLiterals(linkText, context)}>`,
-      });
+      elements.push({ type: "text", text: `<${linkUrl}|${linkText}>` });
     } else if (bareUrl != null && isSlackManualLinkUrl(bareUrl)) {
-      elements.push({
-        type: "link",
-        url: restoreProtectedMarkdownLiterals(bareUrl, context),
-      });
+      elements.push({ type: "link", url: bareUrl });
     } else if (bareUrl != null) {
-      elements.push({
-        type: "text",
-        text: `<${restoreProtectedMarkdownLiterals(bareUrl, context)}>`,
-      });
+      elements.push({ type: "text", text: `<${bareUrl}>` });
     } else if (plainUrl != null) {
       const { url, trailingText } = splitBareUrlTrailingText(plainUrl);
       elements.push({ type: "link", url });
@@ -196,10 +140,6 @@ function applyInlineStyle(elements: InlineElement[], style: InlineStyle): Inline
     }
     return { ...element, style: { ...element.style, ...style } };
   });
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isSlackManualLinkUrl(value: string): boolean {
