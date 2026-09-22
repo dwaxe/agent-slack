@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,6 @@ import {
   listScheduledMessages,
 } from "../src/cli/message-scheduled-actions.ts";
 import {
-  findScheduledMessageReceiptIdentity,
   parseAbsoluteSchedule,
   parseRelativeSchedule,
   resolveSchedulePostAt,
@@ -258,43 +257,6 @@ function createEnterpriseGridContext() {
   return { ctx, calls };
 }
 
-function receiptLifecycle(
-  events: { phase: string; input: Record<string, unknown> }[],
-  options: { finalizeError?: Error; reserveError?: Error } = {},
-): Pick<CliContext, "reserveSendReceipt" | "finalizeSendReceipt" | "cancelSendReceipt"> {
-  let intentCounter = 0;
-  return {
-    reserveSendReceipt: async (input) => {
-      events.push({ phase: "reserve", input });
-      if (options.reserveError) {
-        throw options.reserveError;
-      }
-      intentCounter += 1;
-      return {
-        intent_id: `intent-${intentCounter}`,
-        workspace_url: input.workspaceUrl,
-        channel_id: input.channelId,
-        ts: input.ts,
-        thread_ts: input.threadTs,
-        action: input.action,
-        content_sha256: "a".repeat(64),
-        post_at: input.postAt,
-        reserved_at: "2026-08-11T18:00:00.000Z",
-      };
-    },
-    finalizeSendReceipt: async (input) => {
-      events.push({ phase: "finalize", input });
-      if (options.finalizeError) {
-        throw options.finalizeError;
-      }
-      return {} as never;
-    },
-    cancelSendReceipt: async (input) => {
-      events.push({ phase: "cancel", input });
-    },
-  };
-}
-
 describe("sendMessage", () => {
   const originalFetch = globalThis.fetch;
 
@@ -325,6 +287,7 @@ describe("sendMessage", () => {
     ]);
     expect(result).toEqual({
       ok: true,
+      workspace_url: "https://workspace.slack.com",
       channel_id: "C12345678",
       ts: "1770165109.628379",
       thread_ts: undefined,
@@ -353,215 +316,6 @@ describe("sendMessage", () => {
         unfurl_media: false,
       },
     });
-  });
-
-  test("records a receipt only after a successful send", async () => {
-    const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const ctx: CliContext = {
-      ...createContext(calls),
-      ...receiptLifecycle(receiptEvents),
-    };
-
-    const result = await sendMessage({
-      ctx,
-      targetInput: "C12345678",
-      text: "please use <fix>",
-      options: {},
-    });
-
-    expect(result.receipt_recorded).toBe(true);
-    expect(receiptEvents).toEqual([
-      {
-        phase: "reserve",
-        input: {
-          workspaceUrl: "https://workspace.slack.com",
-          channelId: "C12345678",
-          credentialFingerprint: TEST_CREDENTIAL_FINGERPRINT,
-          ts: undefined,
-          threadTs: undefined,
-          action: "send",
-          content: "please use &lt;fix&gt;",
-          postAt: undefined,
-        },
-      },
-      {
-        phase: "finalize",
-        input: {
-          intentId: "intent-1",
-          ts: "1770165109.628379",
-          scheduledMessageId: undefined,
-          threadTs: undefined,
-        },
-      },
-    ]);
-  });
-
-  test("discovers the exact workspace for token-only provenance before sending", async () => {
-    const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const base = createContext(calls);
-    const ctx: CliContext = {
-      ...base,
-      getClientForWorkspace: async () => {
-        const resolved = await base.getClientForWorkspace();
-        return { ...resolved, workspace_url: undefined };
-      },
-      ...receiptLifecycle(receiptEvents),
-    };
-
-    const result = await sendMessage({
-      ctx,
-      targetInput: "C12345678",
-      text: "token only",
-      options: {},
-    });
-
-    expect(calls.map((call) => call.method)).toEqual(["auth.test", "chat.postMessage"]);
-    expect(receiptEvents[0]?.input.workspaceUrl).toBe("https://workspace.slack.com");
-    expect(result.receipt_recorded).toBe(true);
-  });
-
-  test("rejects a mismatched authenticated workspace before reserve or send", async () => {
-    const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const base = createContext(calls);
-    const ctx: CliContext = {
-      ...base,
-      getClientForWorkspace: async () => {
-        const resolved = await base.getClientForWorkspace();
-        return { ...resolved, workspace_url: "https://other.slack.com" };
-      },
-      ...receiptLifecycle(receiptEvents),
-    };
-
-    await expect(
-      sendMessage({
-        ctx,
-        targetInput: "C12345678",
-        text: "wrong workspace",
-        options: { workspace: "https://other.slack.com" },
-      }),
-    ).rejects.toThrow(/authenticate to https:\/\/workspace\.slack\.com, not requested workspace/);
-    expect(calls).toEqual([{ method: "auth.test", params: {} }]);
-    expect(receiptEvents).toEqual([]);
-  });
-
-  test("reports receipt failure without retrying or failing a successful send", async () => {
-    const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const ctx: CliContext = {
-      ...createContext(calls),
-      ...receiptLifecycle(receiptEvents, { finalizeError: new Error("disk full") }),
-    };
-    const warning = spyOn(process.stderr, "write").mockImplementation(() => true);
-    try {
-      const result = await sendMessage({
-        ctx,
-        targetInput: "C12345678",
-        text: "hello",
-        options: {},
-      });
-
-      expect(result.ok).toBe(true);
-      expect(result.receipt_recorded).toBe(false);
-      expect(calls.filter((call) => call.method === "chat.postMessage")).toHaveLength(1);
-      expect(warning).toHaveBeenCalledWith(expect.stringContaining("mutation succeeded"));
-      expect(receiptEvents.map((event) => event.phase)).toEqual(["reserve", "finalize"]);
-    } finally {
-      warning.mockRestore();
-    }
-  });
-
-  test("does not record a receipt when Slack rejects the send", async () => {
-    const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const base = createContext(calls);
-    const ctx: CliContext = {
-      ...base,
-      getClientForWorkspace: async () => ({
-        client: {
-          credentialFingerprint: () => TEST_CREDENTIAL_FINGERPRINT,
-          api: async (method: string, params: Record<string, unknown>) => {
-            calls.push({ method, params });
-            if (method === "auth.test") {
-              return {
-                ok: true,
-                url: "https://workspace.slack.com/",
-                team_id: "T12345678",
-                user_id: "U12345678",
-              };
-            }
-            throw new Error("channel_not_found");
-          },
-        } as never,
-        auth: { auth_type: "standard", token: "x" as const },
-        workspace_url: "https://workspace.slack.com",
-      }),
-      ...receiptLifecycle(receiptEvents),
-    };
-
-    await expect(
-      sendMessage({ ctx, targetInput: "C12345678", text: "hello", options: {} }),
-    ).rejects.toThrow("channel_not_found");
-    expect(receiptEvents.map((event) => event.phase)).toEqual(["reserve", "cancel"]);
-  });
-
-  test.each(["Slack HTTP 500 calling chat.postMessage", "internal_error"])(
-    "retains the intent when Slack outcome is ambiguous: %s",
-    async (message) => {
-      const calls: { method: string; params: Record<string, unknown> }[] = [];
-      const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-      const base = createContext(calls);
-      const ctx: CliContext = {
-        ...base,
-        getClientForWorkspace: async () => ({
-          client: {
-            credentialFingerprint: () => TEST_CREDENTIAL_FINGERPRINT,
-            api: async (method: string, params: Record<string, unknown>) => {
-              calls.push({ method, params });
-              if (method === "auth.test") {
-                return {
-                  ok: true,
-                  url: "https://workspace.slack.com/",
-                  team_id: "T12345678",
-                  user_id: "U12345678",
-                };
-              }
-              throw new Error(message);
-            },
-          } as never,
-          auth: { auth_type: "standard", token: "x" as const },
-          workspace_url: "https://workspace.slack.com",
-        }),
-        ...receiptLifecycle(receiptEvents),
-      };
-      const warning = spyOn(process.stderr, "write").mockImplementation(() => true);
-      try {
-        await expect(
-          sendMessage({ ctx, targetInput: "C12345678", text: "hello", options: {} }),
-        ).rejects.toThrow(message);
-        expect(receiptEvents.map((event) => event.phase)).toEqual(["reserve"]);
-        expect(warning).toHaveBeenCalledWith(expect.stringContaining("outcome is unknown"));
-      } finally {
-        warning.mockRestore();
-      }
-    },
-  );
-
-  test("aborts before Slack when the durable intent reservation fails", async () => {
-    const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const ctx: CliContext = {
-      ...createContext(calls),
-      ...receiptLifecycle(receiptEvents, { reserveError: new Error("state unavailable") }),
-    };
-
-    await expect(
-      sendMessage({ ctx, targetInput: "C12345678", text: "hello", options: {} }),
-    ).rejects.toThrow("state unavailable");
-    expect(calls).toEqual([{ method: "auth.test", params: {} }]);
-    expect(receiptEvents.map((event) => event.phase)).toEqual(["reserve"]);
   });
 
   test("opens and sends to a DM for a W-prefixed user target", async () => {
@@ -614,6 +368,7 @@ describe("sendMessage", () => {
     ]);
     expect(result).toEqual({
       ok: true,
+      workspace_url: "https://workspace.slack.com",
       channel_id: "C12345678",
       ts: "1770165109.628379",
       thread_ts: undefined,
@@ -634,6 +389,7 @@ describe("sendMessage", () => {
 
     expect(result).toEqual({
       ok: true,
+      workspace_url: "https://workspace.slack.com",
       channel_id: "C12345678",
       ts: "1770165109.628379",
       thread_ts: "1770160000.000001",
@@ -804,13 +560,9 @@ describe("sendMessage", () => {
     expect(calls).toHaveLength(0);
   });
 
-  test("records the attachment initial comment with its returned share identity", async () => {
+  test("returns the attachment share identity", async () => {
     const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const ctx: CliContext = {
-      ...createContext(calls),
-      ...receiptLifecycle(receiptEvents),
-    };
+    const ctx = createContext(calls);
     const dir = await mkdtemp(join(tmpdir(), "agent-slack-send-test-"));
     const filePath = join(dir, "report.md");
     await writeFile(filePath, "# report\n");
@@ -827,42 +579,15 @@ describe("sendMessage", () => {
       });
 
       expect(result.ts).toBe("1770165109.628379");
-      expect(result.receipt_recorded).toBe(true);
-      expect(receiptEvents).toEqual([
-        {
-          phase: "reserve",
-          input: {
-            workspaceUrl: "https://workspace.slack.com",
-            channelId: "C12345678",
-            credentialFingerprint: TEST_CREDENTIAL_FINGERPRINT,
-            threadTs: undefined,
-            action: "attachment_send",
-            content: "here's the report",
-            postAt: undefined,
-          },
-        },
-        {
-          phase: "finalize",
-          input: {
-            intentId: "intent-1",
-            ts: "1770165109.628379",
-            scheduledMessageId: undefined,
-            threadTs: undefined,
-          },
-        },
-      ]);
+      expect(result.workspace_url).toBe("https://workspace.slack.com");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
-  test("does not reserve an attachment intent when the local file is missing", async () => {
+  test("rejects a missing local attachment before Slack access", async () => {
     const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const ctx: CliContext = {
-      ...createContext(calls),
-      ...receiptLifecycle(receiptEvents),
-    };
+    const ctx = createContext(calls);
 
     await expect(
       sendMessage({
@@ -873,16 +598,11 @@ describe("sendMessage", () => {
       }),
     ).rejects.toThrow();
     expect(calls).toEqual([]);
-    expect(receiptEvents).toEqual([]);
   });
 
-  test("does not reserve an attachment intent when the byte upload fails", async () => {
+  test("does not complete an attachment when the byte upload fails", async () => {
     const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const ctx: CliContext = {
-      ...createContext(calls),
-      ...receiptLifecycle(receiptEvents),
-    };
+    const ctx = createContext(calls);
     const dir = await mkdtemp(join(tmpdir(), "agent-slack-send-test-"));
     const filePath = join(dir, "report.md");
     await writeFile(filePath, "# report\n");
@@ -899,43 +619,7 @@ describe("sendMessage", () => {
           options: { attach: [filePath] },
         }),
       ).rejects.toThrow(/Failed to upload attachment bytes/);
-      expect(calls.map((call) => call.method)).toEqual(["auth.test", "files.getUploadURLExternal"]);
-      expect(receiptEvents).toEqual([]);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("rejects a mismatched workspace before uploading attachment bytes", async () => {
-    const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const base = createContext(calls);
-    const ctx: CliContext = {
-      ...base,
-      getClientForWorkspace: async () => {
-        const resolved = await base.getClientForWorkspace();
-        return { ...resolved, workspace_url: "https://other.slack.com" };
-      },
-      ...receiptLifecycle(receiptEvents),
-    };
-    const dir = await mkdtemp(join(tmpdir(), "agent-slack-send-test-"));
-    const filePath = join(dir, "report.md");
-    await writeFile(filePath, "# report\n");
-    const fetchMock = mock(async () => new Response("", { status: 200 }));
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    try {
-      await expect(
-        sendMessage({
-          ctx,
-          targetInput: "C12345678",
-          text: "wrong workspace attachment",
-          options: { attach: [filePath] },
-        }),
-      ).rejects.toThrow(/authenticate to https:\/\/workspace\.slack\.com/);
-      expect(calls).toEqual([{ method: "auth.test", params: {} }]);
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(receiptEvents).toEqual([]);
+      expect(calls.map((call) => call.method)).toEqual(["files.getUploadURLExternal"]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -1284,6 +968,7 @@ describe("sendMessage", () => {
     ]);
     expect(result).toEqual({
       ok: true,
+      workspace_url: "https://workspace.slack.com",
       channel_id: "C12345678",
       scheduled_message_id: "Q1234ABCD",
       post_at: postAt,
@@ -1319,6 +1004,7 @@ describe("sendMessage", () => {
     });
     expect(result).toEqual({
       ok: true,
+      workspace_url: "https://workspace.slack.com",
       channel_id: "C12345678",
       scheduled_message_id: "Dr1234ABCD",
       post_at: postAt,
@@ -1404,40 +1090,6 @@ describe("sendMessage", () => {
     expect(calls[0]?.params).toMatchObject({
       unfurl_links: false,
       unfurl_media: false,
-    });
-  });
-
-  test("records scheduled-message identity after Slack accepts the schedule", async () => {
-    const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const ctx: CliContext = {
-      ...createContext(calls),
-      ...receiptLifecycle(receiptEvents),
-    };
-
-    const result = await sendMessage({
-      ctx,
-      targetInput: "C12345678",
-      text: "later",
-      options: { scheduleIn: "1h" },
-    });
-
-    expect(result.receipt_recorded).toBe(true);
-    expect(receiptEvents.map((event) => event.phase)).toEqual(["reserve", "finalize"]);
-    expect(receiptEvents[0]?.input).toMatchObject({
-      workspaceUrl: "https://workspace.slack.com",
-      channelId: "C12345678",
-      credentialFingerprint: TEST_CREDENTIAL_FINGERPRINT,
-      threadTs: undefined,
-      action: "scheduled_send",
-      content: "later",
-    });
-    expect(typeof receiptEvents[0]?.input.postAt).toBe("number");
-    expect(receiptEvents[1]?.input).toEqual({
-      intentId: "intent-1",
-      ts: undefined,
-      scheduledMessageId: "Q1234ABCD",
-      threadTs: undefined,
     });
   });
 
@@ -1571,118 +1223,6 @@ describe("composeMessage", () => {
 });
 
 describe("scheduled message management", () => {
-  test("matches Slack's numeric list ID to the Q-prefixed mutation ID", async () => {
-    const client = {
-      api: async () => ({
-        ok: true,
-        scheduled_messages: [
-          {
-            id: 1298393284,
-            channel_id: "C12345678",
-            post_at: 1770168709,
-            text: "scheduled",
-          },
-        ],
-        response_metadata: { next_cursor: "" },
-      }),
-    };
-
-    await expect(
-      findScheduledMessageReceiptIdentity(client as never, {
-        channelId: "C12345678",
-        scheduledMessageId: "Q1298393284",
-      }),
-    ).resolves.toEqual({ content: "scheduled", postAt: 1770168709, unique: true });
-  });
-
-  test("marks a matching scheduled identity ambiguous across Slack items", async () => {
-    const client = {
-      api: async () => ({
-        ok: true,
-        scheduled_messages: [
-          {
-            id: 1298393284,
-            channel_id: "C12345678",
-            post_at: 1770168709,
-            text: "Visit www.example.com :rocket:",
-          },
-          {
-            id: 1298393285,
-            channel_id: "C12345678",
-            post_at: 1770168709,
-            text: "Visit <http://example.com|www.example.com> 🚀",
-          },
-        ],
-        response_metadata: { next_cursor: "" },
-      }),
-    };
-
-    const identity = await findScheduledMessageReceiptIdentity(client as never, {
-      channelId: "C12345678",
-      scheduledMessageId: "Q1298393284",
-    });
-    expect(identity?.unique).toBe(false);
-  });
-
-  test("detects a canonical duplicate on a later scheduled-message page", async () => {
-    const calls: Record<string, unknown>[] = [];
-    const client = {
-      api: async (_method: string, params: Record<string, unknown>) => {
-        calls.push(params);
-        if (!params.cursor) {
-          return {
-            ok: true,
-            scheduled_messages: [
-              {
-                id: 1298393284,
-                channel_id: "C12345678",
-                post_at: 1770168709,
-                text: "Visit www.example.com :rocket:",
-              },
-            ],
-            response_metadata: { next_cursor: "page-2" },
-          };
-        }
-        return {
-          ok: true,
-          scheduled_messages: [
-            {
-              id: 1298393285,
-              channel_id: "C12345678",
-              post_at: 1770168709,
-              text: "Visit <http://example.com|www.example.com> 🚀",
-            },
-          ],
-          response_metadata: { next_cursor: "" },
-        };
-      },
-    };
-
-    const identity = await findScheduledMessageReceiptIdentity(client as never, {
-      channelId: "C12345678",
-      scheduledMessageId: "Q1298393284",
-    });
-    expect(identity?.unique).toBe(false);
-    expect(calls).toHaveLength(2);
-  });
-
-  test("fails closed on repeated scheduled-message pagination cursors", async () => {
-    const client = {
-      api: async () => ({
-        ok: true,
-        scheduled_messages: [],
-        response_metadata: { next_cursor: "repeated" },
-      }),
-    };
-
-    await expect(
-      findScheduledMessageReceiptIdentity(client as never, {
-        channelId: "C12345678",
-        scheduledMessageId: "Q1298393284",
-      }),
-    ).rejects.toThrow(/repeated.*cursor/i);
-  });
-
   test("lists scheduled messages and forwards channel filters", async () => {
     const calls: { method: string; params: Record<string, unknown> }[] = [];
     const ctx = createContext(calls);
@@ -1754,41 +1294,6 @@ describe("scheduled message management", () => {
     expect(result.scheduled_messages).toHaveLength(1);
   });
 
-  test("fails closed when native receipt reconciliation is truncated", async () => {
-    const client = {
-      api: async () => ({
-        ok: true,
-        drafts: [
-          {
-            id: "Dr1234ABCD",
-            date_scheduled: 1770168709,
-            destinations: [{ channel_id: "C12345678" }],
-            blocks: [
-              {
-                type: "rich_text",
-                elements: [
-                  {
-                    type: "rich_text_section",
-                    elements: [{ type: "text", text: "scheduled" }],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-        has_more: true,
-      }),
-    };
-
-    await expect(
-      findScheduledMessageReceiptIdentity(client as never, {
-        channelId: "C12345678",
-        scheduledMessageId: "Dr1234ABCD",
-        authType: "browser",
-      }),
-    ).rejects.toThrow(/incomplete.*100/i);
-  });
-
   test("cancels scheduled messages with the required channel id", async () => {
     const calls: { method: string; params: Record<string, unknown> }[] = [];
     const ctx = createContext(calls);
@@ -1856,43 +1361,6 @@ describe("scheduled message management", () => {
       },
     ]);
   });
-
-  test("removes the exact local receipt after a scheduled cancellation succeeds", async () => {
-    const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const cleanupInputs: Record<string, unknown>[] = [];
-    const ctx: CliContext = {
-      ...createContext(calls),
-      removeScheduledSendReceipt: async (input) => {
-        cleanupInputs.push(input);
-        return { finalized_receipt_removed: true, pending_intent_removed: false };
-      },
-    };
-
-    const result = await cancelScheduledMessage({
-      ctx,
-      scheduledMessageId: "Q1234ABCD",
-      options: { workspace: "https://workspace.slack.com", channel: "C12345678" },
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      channel_id: "C12345678",
-      scheduled_message_id: "Q1234ABCD",
-      receipt_removed: true,
-      pending_intent_removed: false,
-    });
-    expect(cleanupInputs).toEqual([
-      {
-        workspaceUrl: "https://workspace.slack.com",
-        channelId: "C12345678",
-        scheduledMessageId: "Q1234ABCD",
-        content: "scheduled",
-        postAt: 1770168709,
-        credentialFingerprint: TEST_CREDENTIAL_FINGERPRINT,
-        reconciledAt: expect.any(Date),
-      },
-    ]);
-  });
 });
 
 describe("scheduled message time parsing", () => {
@@ -1946,13 +1414,9 @@ describe("editMessage", () => {
     ]);
   });
 
-  test("records an edit only after chat.update succeeds", async () => {
+  test("returns the stable identity of an edited message", async () => {
     const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const ctx: CliContext = {
-      ...createContext(calls),
-      ...receiptLifecycle(receiptEvents),
-    };
+    const ctx = createContext(calls);
 
     const result = await editMessage({
       ctx,
@@ -1961,49 +1425,13 @@ describe("editMessage", () => {
       options: { ts: "1770165109.628379" },
     });
 
-    expect(result).toEqual({ ok: true, receipt_recorded: true });
-    expect(receiptEvents).toEqual([
-      {
-        phase: "reserve",
-        input: {
-          workspaceUrl: "https://workspace.slack.com",
-          channelId: "C12345678",
-          credentialFingerprint: TEST_CREDENTIAL_FINGERPRINT,
-          ts: "1770165109.628379",
-          threadTs: undefined,
-          action: "edit",
-          content: "updated",
-          postAt: undefined,
-        },
-      },
-      {
-        phase: "finalize",
-        input: {
-          intentId: "intent-1",
-          ts: "1770165109.628379",
-          scheduledMessageId: undefined,
-          threadTs: undefined,
-        },
-      },
-    ]);
-  });
-
-  test("rejects a malformed known edit ts before chat.update", async () => {
-    const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const ctx: CliContext = {
-      ...createContext(calls),
-      ...receiptLifecycle([], { reserveError: new Error("invalid exact Slack timestamp") }),
-    };
-
-    await expect(
-      editMessage({
-        ctx,
-        targetInput: "C12345678",
-        text: "updated",
-        options: { ts: "not-a-slack-ts" },
-      }),
-    ).rejects.toThrow(/exact Slack timestamp/);
-    expect(calls).toEqual([{ method: "auth.test", params: {} }]);
+    expect(result).toEqual({
+      ok: true,
+      workspace_url: "https://workspace.slack.com",
+      channel_id: "C12345678",
+      ts: "1770165109.628379",
+      permalink: "https://workspace.slack.com/archives/C12345678/p1770165109628379",
+    });
   });
 
   test("edits literal angle bracket text without blocks", async () => {
@@ -2154,7 +1582,13 @@ describe("editMessage", () => {
       options: { workspace: "https://workspace.slack.com", ts: "1770165109.628379" },
     });
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({
+      ok: true,
+      workspace_url: "https://workspace.slack.com",
+      channel_id: "C12345678",
+      ts: "1770165109.628379",
+      permalink: "https://workspace.slack.com/archives/C12345678/p1770165109628379",
+    });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.method).toBe("chat.update");
     expect(calls[0]?.params).toEqual({

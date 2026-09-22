@@ -123,14 +123,6 @@ describe("agent-facing help contracts", () => {
     expect(exportOwn.options.find((option) => option.long === "--oldest")?.mandatory).toBe(true);
   });
 
-  test("receipt listing requires an exact workspace and timestamp window", () => {
-    const list = findCommand(buildProgram(), "message", "receipts", "list");
-
-    expect(optionDescription(list, "--workspace")).toContain("Exact full workspace URL");
-    expect(optionDescription(list, "--oldest")).toContain("Exact inclusive Slack timestamp");
-    expect(list.options.every((option) => option.mandatory)).toBe(true);
-  });
-
   test("Slack-native drafts document DM targeting and inherited-broadcast controls", () => {
     const create = findCommand(buildProgram(), "message", "draft", "create");
     expect(create.registeredArguments[0]?.description).toContain("user id");

@@ -16,13 +16,6 @@ import {
   scheduleMessage as scheduleMessageApi,
 } from "../slack/scheduled-messages.ts";
 import { buildUnfurlApiParams } from "./unfurl-options.ts";
-import type { SendReceiptIntent } from "../lib/send-receipts.ts";
-import {
-  cancelMutationReceiptAfterFailure,
-  finalizeMutationReceipt,
-  reserveMutationReceipt,
-  resolveAuthenticatedMutationWorkspace,
-} from "./mutation-receipt.ts";
 import { resolveSlackNativeDraftEndpoint } from "./slack-native-draft-endpoint.ts";
 
 function loadBlocksFromPath(path: string): unknown[] {
@@ -195,14 +188,10 @@ export async function sendMessage(input: {
       workspaceUrl,
       work: async () => {
         const { client, auth, workspace_url } = await input.ctx.getClientForWorkspace(workspaceUrl);
-        const exactWorkspaceUrl = input.ctx.reserveSendReceipt
-          ? await resolveAuthenticatedMutationWorkspace(client, workspace_url ?? workspaceUrl)
-          : (workspace_url ?? workspaceUrl);
         const dmChannelId = await openDmChannel(client, target.userId);
         return await sendMessageToChannel({
           client,
-          workspaceUrl: exactWorkspaceUrl,
-          authenticatedWorkspaceUrl: exactWorkspaceUrl,
+          workspaceUrl: workspace_url ?? workspaceUrl,
           channelId: dmChannelId,
           text: formattedText,
           draftText: input.text,
@@ -252,7 +241,6 @@ export async function sendMessage(input: {
 async function sendMessageToChannel(input: {
   client: SlackApiClient;
   workspaceUrl?: string;
-  authenticatedWorkspaceUrl?: string;
   channelId: string;
   text: string;
   draftText: string;
@@ -272,97 +260,57 @@ async function sendMessageToChannel(input: {
       auth: input.auth,
       workspaceUrl: input.workspaceUrl,
     });
-    const intent = await reserveMutationReceipt(input.ctx, {
-      client: input.client,
-      workspaceUrl: input.workspaceUrl,
-      authenticatedWorkspaceUrl: input.authenticatedWorkspaceUrl,
+    const resp = await scheduleMessageApi(endpoint.client, {
+      authType: endpoint.auth.auth_type,
       channelId: input.channelId,
-      threadTs: input.threadTs,
-      action: "scheduled_send",
-      content: input.text,
+      text: input.text,
+      draftText: input.draftText,
       postAt: input.postAt,
+      threadTs: input.threadTs,
+      replyBroadcast: input.replyBroadcast,
+      blocks: input.blocks,
+      unfurl: input.unfurl,
     });
-    let resp: Record<string, unknown>;
-    try {
-      resp = await scheduleMessageApi(endpoint.client, {
-        authType: endpoint.auth.auth_type,
-        channelId: input.channelId,
-        text: input.text,
-        draftText: input.draftText,
-        postAt: input.postAt,
-        threadTs: input.threadTs,
-        replyBroadcast: input.replyBroadcast,
-        blocks: input.blocks,
-        unfurl: input.unfurl,
-      });
-    } catch (error) {
-      await cancelMutationReceiptAfterFailure(input.ctx, intent, error);
-      throw error;
-    }
     const channelId = typeof resp.channel === "string" ? resp.channel : input.channelId;
     const scheduledMessageId =
       typeof resp.scheduled_message_id === "string" ? resp.scheduled_message_id : undefined;
-    const receiptStatus = await finalizeMutationReceipt(input.ctx, intent, {
-      scheduledMessageId,
-      threadTs: input.threadTs,
-    });
     return {
       ok: true,
+      workspace_url: input.workspaceUrl,
       channel_id: channelId,
       scheduled_message_id: scheduledMessageId,
       post_at: getResponseNumber(resp.post_at) ?? input.postAt,
       thread_ts: input.threadTs,
-      ...receiptStatus,
     };
   }
 
   if (input.attachPaths.length === 0) {
-    const intent = await reserveMutationReceipt(input.ctx, {
-      client: input.client,
-      workspaceUrl: input.workspaceUrl,
-      authenticatedWorkspaceUrl: input.authenticatedWorkspaceUrl,
-      channelId: input.channelId,
-      threadTs: input.threadTs,
-      action: "send",
-      content: input.text,
+    const resp = await input.client.api("chat.postMessage", {
+      channel: input.channelId,
+      text: input.text,
+      thread_ts: input.threadTs,
+      ...(input.blocks ? { blocks: input.blocks } : {}),
+      ...(input.replyBroadcast && input.threadTs ? { reply_broadcast: true } : {}),
+      ...buildUnfurlApiParams(input.unfurl),
     });
-    let resp: Record<string, unknown>;
-    try {
-      resp = await input.client.api("chat.postMessage", {
-        channel: input.channelId,
-        text: input.text,
-        thread_ts: input.threadTs,
-        ...(input.blocks ? { blocks: input.blocks } : {}),
-        ...(input.replyBroadcast && input.threadTs ? { reply_broadcast: true } : {}),
-        ...buildUnfurlApiParams(input.unfurl),
-      });
-    } catch (error) {
-      await cancelMutationReceiptAfterFailure(input.ctx, intent, error);
-      throw error;
-    }
     const ts = typeof resp.ts === "string" ? resp.ts : undefined;
     const channelId = typeof resp.channel === "string" ? resp.channel : input.channelId;
-    const exactWorkspaceUrl = intent?.workspace_url ?? input.workspaceUrl;
     const permalink =
-      exactWorkspaceUrl && ts
+      input.workspaceUrl && ts
         ? buildSlackMessageUrl({
-            workspace_url: exactWorkspaceUrl,
+            workspace_url: input.workspaceUrl,
             channel_id: channelId,
             message_ts: ts,
             thread_ts: input.threadTs,
           })
         : undefined;
-    const receiptStatus = await finalizeMutationReceipt(input.ctx, intent, {
-      ts,
-      threadTs: input.threadTs,
-    });
     return {
       ok: true,
+      workspace_url: input.workspaceUrl,
       channel_id: channelId,
       ts,
       thread_ts: input.threadTs,
       permalink,
-      ...receiptStatus,
     };
   }
 
@@ -374,60 +322,24 @@ async function sendMessageToChannel(input: {
 
   let initialComment = input.text;
   let firstUploadIdentity: { channel_id: string; ts?: string; thread_ts?: string } | undefined;
-  let receiptStatus: Record<string, unknown> = {};
-  let verifiedWorkspaceUrl: string | undefined;
   for (const filePath of input.attachPaths) {
-    const comment = initialComment.trim() || undefined;
-    let intent: SendReceiptIntent | undefined;
-    let upload;
-    try {
-      upload = await uploadLocalFileToSlack({
-        client: input.client,
-        channelId: input.channelId,
-        filePath,
-        threadTs: input.threadTs,
-        initialComment,
-        beforeUpload: input.ctx.reserveSendReceipt
-          ? async () => {
-              verifiedWorkspaceUrl ??=
-                input.authenticatedWorkspaceUrl ??
-                (await resolveAuthenticatedMutationWorkspace(input.client, input.workspaceUrl));
-            }
-          : undefined,
-        beforeComplete: comment
-          ? async () => {
-              intent = await reserveMutationReceipt(input.ctx, {
-                client: input.client,
-                workspaceUrl: verifiedWorkspaceUrl ?? input.workspaceUrl,
-                authenticatedWorkspaceUrl: verifiedWorkspaceUrl,
-                channelId: input.channelId,
-                threadTs: input.threadTs,
-                action: "attachment_send",
-                content: comment,
-              });
-            }
-          : undefined,
-      });
-    } catch (error) {
-      await cancelMutationReceiptAfterFailure(input.ctx, intent, error);
-      throw error;
-    }
+    const upload = await uploadLocalFileToSlack({
+      client: input.client,
+      channelId: input.channelId,
+      filePath,
+      threadTs: input.threadTs,
+      initialComment,
+    });
     firstUploadIdentity ??= upload;
-    if (comment) {
-      receiptStatus = await finalizeMutationReceipt(input.ctx, intent, {
-        ts: upload.ts,
-        threadTs: upload.thread_ts ?? input.threadTs,
-      });
-    }
     initialComment = "";
   }
 
   return {
     ok: true,
+    workspace_url: input.workspaceUrl,
     channel_id: firstUploadIdentity?.channel_id ?? input.channelId,
     ...(firstUploadIdentity?.ts ? { ts: firstUploadIdentity.ts } : {}),
     thread_ts: firstUploadIdentity?.thread_ts ?? input.threadTs,
-    ...receiptStatus,
   };
 }
 
@@ -469,26 +381,23 @@ export async function editMessage(input: {
         const { ref } = target;
         warnOnTruncatedSlackUrl(ref);
         const { client, workspace_url } = await input.ctx.getClientForWorkspace(ref.workspace_url);
-        const intent = await reserveMutationReceipt(input.ctx, {
-          client,
-          workspaceUrl: workspace_url ?? ref.workspace_url,
-          channelId: ref.channel_id,
+        await client.api("chat.update", {
+          channel: ref.channel_id,
           ts: ref.message_ts,
-          action: "edit",
-          content: formattedText,
+          text: formattedText,
+          ...(blocks ? { blocks } : {}),
         });
-        try {
-          await client.api("chat.update", {
-            channel: ref.channel_id,
-            ts: ref.message_ts,
-            text: formattedText,
-            ...(blocks ? { blocks } : {}),
-          });
-        } catch (error) {
-          await cancelMutationReceiptAfterFailure(input.ctx, intent, error);
-          throw error;
-        }
-        return finalizeMutationReceipt(input.ctx, intent, { ts: ref.message_ts });
+        return {
+          workspace_url: workspace_url ?? ref.workspace_url,
+          channel_id: ref.channel_id,
+          ts: ref.message_ts,
+          permalink: buildSlackMessageUrl({
+            workspace_url: workspace_url ?? ref.workspace_url,
+            channel_id: ref.channel_id,
+            message_ts: ref.message_ts,
+            thread_ts: ref.thread_ts_hint,
+          }),
+        };
       }
 
       const ts = requireMessageTs(input.options.ts);
@@ -498,26 +407,27 @@ export async function editMessage(input: {
       });
       const { client, workspace_url } = await input.ctx.getClientForWorkspace(workspaceUrl);
       const channelId = await resolveChannelId(client, target.channel);
-      const intent = await reserveMutationReceipt(input.ctx, {
-        client,
-        workspaceUrl: workspace_url ?? workspaceUrl,
-        channelId,
+      await client.api("chat.update", {
+        channel: channelId,
         ts,
-        action: "edit",
-        content: formattedText,
+        text: formattedText,
+        ...(blocks ? { blocks } : {}),
       });
-      try {
-        await client.api("chat.update", {
-          channel: channelId,
-          ts,
-          text: formattedText,
-          ...(blocks ? { blocks } : {}),
-        });
-      } catch (error) {
-        await cancelMutationReceiptAfterFailure(input.ctx, intent, error);
-        throw error;
-      }
-      return finalizeMutationReceipt(input.ctx, intent, { ts });
+      const exactWorkspaceUrl = workspace_url ?? workspaceUrl;
+      return {
+        workspace_url: exactWorkspaceUrl,
+        channel_id: channelId,
+        ts,
+        ...(exactWorkspaceUrl
+          ? {
+              permalink: buildSlackMessageUrl({
+                workspace_url: exactWorkspaceUrl,
+                channel_id: channelId,
+                message_ts: ts,
+              }),
+            }
+          : {}),
+      };
     },
   });
 

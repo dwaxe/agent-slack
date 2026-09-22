@@ -1,6 +1,5 @@
 import type { SlackApiClient } from "./client.ts";
 import { getString, isRecord } from "../lib/object-type-guards.ts";
-import { canonicalSlackTextContentSha256, slackTextContentSha256 } from "./content-identity.ts";
 import { slackMrkdwnToMarkdown } from "./mrkdwn.ts";
 import { isUserId } from "./user-id.ts";
 
@@ -21,8 +20,6 @@ type OwnMessageCandidate = {
   channel: Record<string, unknown> | null;
   ts: ParsedSlackTimestamp;
   content: string;
-  contentSha256: string;
-  canonicalContentSha256: string;
   permalink?: string;
 };
 
@@ -30,8 +27,6 @@ export type OwnMessageExportMessage = {
   channel_id: string;
   ts: string;
   content: string;
-  content_sha256: string;
-  canonical_content_sha256: string;
   permalink?: string;
 };
 
@@ -141,8 +136,6 @@ export async function exportOwnMessages(input: {
       channel_id: candidate.channelId,
       ts: candidate.ts.value,
       content: candidate.content,
-      content_sha256: candidate.contentSha256,
-      canonical_content_sha256: candidate.canonicalContentSha256,
       ...(candidate.permalink ? { permalink: candidate.permalink } : {}),
     };
     const key = `${message.channel_id}\u0000${message.ts}`;
@@ -311,10 +304,6 @@ function candidateFromSearchMatch(
     // Only the top-level text is the authenticated user's own writing. Blocks
     // and attachments can contain quoted, forwarded, or generated content.
     content: slackMrkdwnToMarkdown(rawContent).trim(),
-    // Receipts hash the exact outbound Slack text, so retain a hash of the raw
-    // top-level value before Markdown conversion or whitespace normalization.
-    contentSha256: slackTextContentSha256(rawContent),
-    canonicalContentSha256: canonicalSlackTextContentSha256(rawContent),
     ...(permalink ? { permalink } : {}),
   };
 }

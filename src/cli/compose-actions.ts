@@ -5,11 +5,6 @@ import { resolveChannelId, resolveChannelName, normalizeChannelInput } from "../
 import { warnOnTruncatedSlackUrl } from "./message-url-warning.ts";
 import { openDraftEditor } from "./draft-server.ts";
 import { buildUnfurlApiParams } from "./unfurl-options.ts";
-import {
-  cancelMutationReceiptAfterFailure,
-  finalizeMutationReceipt,
-  reserveMutationReceipt,
-} from "./mutation-receipt.ts";
 
 export async function composeMessage(input: {
   ctx: CliContext;
@@ -45,8 +40,6 @@ export async function composeMessage(input: {
           workspaceUrl: workspace_url ?? ref.workspace_url,
           threadTs,
           initialText: input.initialText,
-          ctx: input.ctx,
-          client,
           sendFn: async (text: string) => {
             const resp = await client.api("chat.postMessage", {
               channel: ref.channel_id,
@@ -83,8 +76,6 @@ export async function composeMessage(input: {
         workspaceUrl: workspace_url ?? workspaceUrl,
         threadTs: input.options.threadTs,
         initialText: input.initialText,
-        ctx: input.ctx,
-        client,
         sendFn: async (text: string) => {
           const resp = await client.api("chat.postMessage", {
             channel: channelId,
@@ -105,44 +96,14 @@ async function draftWithEditor(input: {
   workspaceUrl?: string;
   threadTs?: string;
   initialText?: string;
-  ctx: CliContext;
-  client: Parameters<typeof reserveMutationReceipt>[1]["client"];
   sendFn: (text: string) => Promise<{ ts: string }>;
 }): Promise<Record<string, unknown>> {
-  const sendWithReceipt = async (text: string) => {
-    const intent = await reserveMutationReceipt(input.ctx, {
-      client: input.client,
-      workspaceUrl: input.workspaceUrl,
-      channelId: input.channelId,
-      threadTs: input.threadTs,
-      action: "compose_send",
-      content: text,
-    });
-    let result: { ts: string };
-    try {
-      result = await input.sendFn(text);
-    } catch (error) {
-      await cancelMutationReceiptAfterFailure(input.ctx, intent, error);
-      throw error;
-    }
-    const receiptStatus = await finalizeMutationReceipt(input.ctx, intent, {
-      ts: result.ts,
-      threadTs: input.threadTs,
-    });
-    return {
-      ...result,
-      ...(typeof receiptStatus.receipt_recorded === "boolean"
-        ? { receipt_recorded: receiptStatus.receipt_recorded }
-        : {}),
-    };
-  };
-
   // In CI mode, skip the editor and send directly
   if (process.env.CI) {
     if (!input.initialText) {
       throw new Error("In CI mode, initial text is required (no editor available)");
     }
-    const result = await sendWithReceipt(input.initialText);
+    const result = await input.sendFn(input.initialText);
     return {
       ok: true,
       sent: true,
@@ -151,9 +112,6 @@ async function draftWithEditor(input: {
       channel_id: input.channelId,
       ts: result.ts,
       thread_ts: input.threadTs,
-      ...(result.receipt_recorded !== undefined
-        ? { receipt_recorded: result.receipt_recorded }
-        : {}),
     };
   }
 
@@ -163,7 +121,7 @@ async function draftWithEditor(input: {
     workspaceUrl: input.workspaceUrl,
     threadTs: input.threadTs,
     initialText: input.initialText,
-    onSend: sendWithReceipt,
+    onSend: input.sendFn,
   });
 
   if ("cancelled" in result) {
@@ -177,6 +135,5 @@ async function draftWithEditor(input: {
     channel_id: input.channelId,
     ts: result.ts,
     thread_ts: input.threadTs,
-    ...(result.receipt_recorded !== undefined ? { receipt_recorded: result.receipt_recorded } : {}),
   };
 }

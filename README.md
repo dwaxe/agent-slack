@@ -241,16 +241,9 @@ agent-slack message export-own \
   --workspace "https://workspace.slack.com" \
   --oldest "1770165109.000000" \
   --latest "1772757109.999999"
-
-agent-slack message receipts list \
-  --workspace "https://workspace.slack.com" \
-  --oldest "1770165109.000000" \
-  --latest "1772757109.999999"
 ```
 
-`message export-own` verifies `team_id`, `user_id`, and the exact workspace origin with `auth.test`, filters exact timestamps locally, deduplicates by channel and timestamp, and returns messages chronologically. Each message includes Markdown `content`, a raw `content_sha256`, and `canonical_content_sha256`. The canonical hash is computed consistently for outbound and search-retrieved Slack text so URL autolinking, HTML entities, mention labels, and standard emoji rewrites do not change fallback identity. Its `complete` is `false` if the explicit 100-page search cap is reached; Slack search itself can still apply service-side sampling.
-
-Mutation receipts are kept locally under `$XDG_STATE_HOME/agent-slack/` (or `~/.local/state/agent-slack/`) with raw and canonical content hashes rather than plaintext. Every message mutation verifies its authenticated workspace and reserves a write-ahead intent before the human-facing Slack write. `message receipts list` reports `tracking_started_at`, `unresolved_intent_count`, and `incomplete_reasons`; `complete` requires coverage of the requested window plus Slack's 120-day scheduling horizon, no unresolved in-window intent, and canonical hashes for every receipt that lacks an exact Slack `ts`. Consumers should prefer `(channel_id, ts)` and use `(channel_id, canonical_content_sha256)` only for timestamp-less fallback.
+`message export-own` verifies `team_id`, `user_id`, and the exact workspace origin with `auth.test`, filters exact timestamps locally, deduplicates by channel and timestamp, and returns messages chronologically. Each message includes its channel, exact timestamp, and Markdown `content`. Its `complete` is `false` if the explicit 100-page search cap is reached; Slack search itself can still apply service-side sampling.
 
 ### Unsubscribe from thread notifications
 

@@ -1,12 +1,9 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { composeMessage } from "../src/cli/compose-actions.ts";
 import type { CliContext } from "../src/cli/context.ts";
 
-const TEST_CREDENTIAL_FINGERPRINT = "f".repeat(64);
-
 function createComposeContext(input: {
   calls: { method: string; params: Record<string, unknown> }[];
-  receiptEvents: { phase: string; input: Record<string, unknown> }[];
 }): CliContext {
   return {
     effectiveWorkspaceUrl: (flag?: string) => flag,
@@ -17,7 +14,6 @@ function createComposeContext(input: {
     }) => work.work(),
     getClientForWorkspace: async () => ({
       client: {
-        credentialFingerprint: () => TEST_CREDENTIAL_FINGERPRINT,
         api: async (method: string, params: Record<string, unknown>) => {
           input.calls.push({ method, params });
           if (method === "auth.test") {
@@ -53,26 +49,6 @@ function createComposeContext(input: {
     importChrome: () => ({ cookie_d: "", teams: [] }),
     importBrave: async () => null,
     importFirefox: async () => null,
-    reserveSendReceipt: mock(async (receiptInput) => {
-      input.receiptEvents.push({ phase: "reserve", input: receiptInput });
-      return {
-        intent_id: "intent-1",
-        workspace_url: receiptInput.workspaceUrl,
-        channel_id: receiptInput.channelId,
-        ts: receiptInput.ts,
-        thread_ts: receiptInput.threadTs,
-        action: receiptInput.action,
-        content_sha256: "a".repeat(64),
-        reserved_at: "2026-08-11T18:00:00.000Z",
-      };
-    }),
-    finalizeSendReceipt: mock(async (receiptInput) => {
-      input.receiptEvents.push({ phase: "finalize", input: receiptInput });
-      return {} as never;
-    }),
-    cancelSendReceipt: mock(async (receiptInput) => {
-      input.receiptEvents.push({ phase: "cancel", input: receiptInput });
-    }),
   };
 }
 
@@ -87,11 +63,10 @@ describe("composeMessage", () => {
     }
   });
 
-  test("preserves message identifiers and records the successful editor send", async () => {
+  test("preserves message identifiers for the successful editor send", async () => {
     process.env.CI = "1";
     const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const ctx = createComposeContext({ calls, receiptEvents });
+    const ctx = createComposeContext({ calls });
 
     const result = await composeMessage({
       ctx,
@@ -108,38 +83,13 @@ describe("composeMessage", () => {
       channel_id: "C12345678",
       ts: "1770165109.628379",
       thread_ts: "1770160000.000001",
-      receipt_recorded: true,
     });
-    expect(receiptEvents).toEqual([
-      {
-        phase: "reserve",
-        input: {
-          workspaceUrl: "https://workspace.slack.com",
-          channelId: "C12345678",
-          credentialFingerprint: TEST_CREDENTIAL_FINGERPRINT,
-          threadTs: "1770160000.000001",
-          action: "compose_send",
-          content: "draft text",
-          postAt: undefined,
-        },
-      },
-      {
-        phase: "finalize",
-        input: {
-          intentId: "intent-1",
-          ts: "1770165109.628379",
-          scheduledMessageId: undefined,
-          threadTs: "1770160000.000001",
-        },
-      },
-    ]);
   });
 
   test("does not record when CI compose is cancelled before sending", async () => {
     process.env.CI = "1";
     const calls: { method: string; params: Record<string, unknown> }[] = [];
-    const receiptEvents: { phase: string; input: Record<string, unknown> }[] = [];
-    const ctx = createComposeContext({ calls, receiptEvents });
+    const ctx = createComposeContext({ calls });
 
     await expect(
       composeMessage({
@@ -149,6 +99,5 @@ describe("composeMessage", () => {
       }),
     ).rejects.toThrow(/initial text is required/);
     expect(calls).toEqual([]);
-    expect(receiptEvents).toEqual([]);
   });
 });

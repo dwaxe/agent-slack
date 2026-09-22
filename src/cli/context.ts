@@ -8,21 +8,6 @@ import { normalizeChannelInput } from "../slack/channels.ts";
 import type { SlackApiClient } from "../slack/client.ts";
 import { type SlackAuth } from "../slack/client.ts";
 import {
-  cancelSendReceipt,
-  finalizeSendReceipt,
-  recordSendReceipt,
-  removeScheduledSendReceipt,
-  reserveSendReceipt,
-  type CancelSendReceiptInput,
-  type FinalizeSendReceiptInput,
-  type RecordSendReceiptInput,
-  type RemoveScheduledSendReceiptInput,
-  type RemoveScheduledSendReceiptResult,
-  type ReserveSendReceiptInput,
-  type SendReceipt,
-  type SendReceiptIntent,
-} from "../lib/send-receipts.ts";
-import {
   getClientForWorkspace,
   normalizeUrl,
   type ClientResolutionOptions,
@@ -54,14 +39,6 @@ export type CliContext = {
   importChrome: () => ReturnType<typeof extractFromChrome>;
   importBrave: () => ReturnType<typeof extractFromBrave>;
   importFirefox: () => ReturnType<typeof extractFromFirefox>;
-  /** Optional so focused action tests can avoid writing to the real state directory. */
-  recordSendReceipt?: (input: RecordSendReceiptInput) => Promise<SendReceipt>;
-  reserveSendReceipt?: (input: ReserveSendReceiptInput) => Promise<SendReceiptIntent>;
-  finalizeSendReceipt?: (input: FinalizeSendReceiptInput) => Promise<SendReceipt>;
-  cancelSendReceipt?: (input: CancelSendReceiptInput) => Promise<void>;
-  removeScheduledSendReceipt?: (
-    input: RemoveScheduledSendReceiptInput,
-  ) => Promise<RemoveScheduledSendReceiptResult>;
 };
 
 function isEnvAuthConfigured(): boolean {
@@ -223,10 +200,5 @@ export function createCliContext(): CliContext {
     importChrome: extractFromChrome,
     importBrave: extractFromBrave,
     importFirefox: extractFromFirefox,
-    recordSendReceipt,
-    reserveSendReceipt,
-    finalizeSendReceipt,
-    cancelSendReceipt,
-    removeScheduledSendReceipt,
   };
 }

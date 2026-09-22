@@ -21,12 +21,11 @@ Slack data commands print JSON to stdout. Help and some authentication setup com
 
 Compact readers preserve valid user-group and broadcast rich-text elements. Read `mentions.md` before constructing a live notification.
 
-`message export-own` returns a schema-versioned, chronological window of the authenticated user's top-level text in public/private channels. Each message has Markdown `content`, an exact raw-text `content_sha256`, and a `canonical_content_sha256` that normalizes Slack URL autolinking, entities, mention labels, and standard emoji rewrites consistently with mutation receipts. `oldest` and `latest` are exact inclusive Slack timestamps. It excludes DMs/group DMs, verifies the author ID and workspace origin, deduplicates by `channel_id` + `ts`, and does not hydrate messages or files. Reject `complete: false`; it means the bounded search pagination cap was reached.
-
-`message receipts list` returns schema-versioned local mutation provenance for an exact inclusive `oldest`/`latest` window with `tracking_started_at`, `unresolved_intent_count`, `incomplete_reasons`, and raw plus canonical content hashes, never message plaintext. `complete` requires coverage of the pre-window 120-day scheduling horizon, no in-window unresolved write-ahead intent, and a canonical hash for every timestamp-less receipt. Use `(channel_id, ts)` to exclude immediate sends/edits; use channel plus `canonical_content_sha256` only as a fallback when `ts` is absent.
+`message export-own` returns a schema-versioned, chronological window of the authenticated user's top-level text in public/private channels. Each message has `channel_id`, an exact `ts`, Markdown `content`, and an optional permalink. `oldest` and `latest` are exact inclusive Slack timestamps. It excludes DMs/group DMs, verifies the author ID and workspace origin, deduplicates by `channel_id` + `ts`, and does not hydrate messages or files. Reject `complete: false`; it means the bounded search pagination cap was reached.
 
 - An immediate, non-attachment `message send` returns:
   - `ok: true`
+  - `workspace_url?: "https://..."` — exact resolved workspace when available
   - `channel_id: "C..." | "D..."`
   - `ts?: "<seconds>.<micros>"` — the posted message's ts
   - `thread_ts?: "<seconds>.<micros>"` — present only when the send was into an existing thread
@@ -35,7 +34,7 @@ Compact readers preserve valid user-group and broadcast rich-text elements. Read
 Attachment sends return `channel_id`, and now also return `ts`/`thread_ts` when Slack supplies share metadata; do not assume an attachment send has a permalink. Scheduled sends return `scheduled_message_id` (`Q...` for standard tokens or `Dr...` for browser auth) and `post_at` instead of `ts`/`permalink`, plus `thread_ts` when applicable.
 
 - `message scheduled list` returns `scheduled_messages: [ ... ]`, optional `next_cursor` for standard-token pagination, and optional `has_more: true` when a browser-auth native-draft result may be incomplete.
-- `message scheduled cancel` returns `channel_id` and `scheduled_message_id`; local provenance-cleanup fields can also appear.
+- `message scheduled cancel` returns `channel_id` and `scheduled_message_id`.
 - `message draft list` returns `drafts: [ ... ]` and `count`. Create/update returns `draft`; delete returns `draft_id`. Draft destinations include channel/thread/broadcast metadata where present.
 - `thread unsubscribe` returns `status: "unsubscribed"` after a verified change or `status: "already_unsubscribed"` after an idempotent no-op, plus canonical workspace/channel/thread metadata and the root permalink. Both success states report `subscribed: false`.
 - `canvas create` returns `canvas: { id, title?, channel_id? }`. `canvas get` returns `canvas: { id, title?, markdown }`.

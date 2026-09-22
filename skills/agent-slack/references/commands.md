@@ -77,10 +77,6 @@ not portable secrets.
   - Excludes DMs/group DMs; does not hydrate messages, resolve users, or download files.
   - `--workspace <url-or-unique-substring>` pins one workspace; `--oldest` is required.
 
-- `agent-slack message receipts list --workspace <full-url> --oldest <exact-ts> --latest <exact-ts>`
-  - Lists local send/edit provenance without message plaintext for an exact inclusive window.
-  - All three options are required. Reject `complete: false` before treating the result as a complete anti-join set.
-
 - `agent-slack message compose <target> [text]`
   - Opens a send-capable rich editor in the browser; this is a mutation-capable command, not a draft-only action.
   - In CI, the editor is skipped and supplied text is sent immediately; safe mode blocks this shortcut.

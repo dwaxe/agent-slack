@@ -60,7 +60,7 @@ The first command identifies the focal message; the second returns its thread.
   unfamiliar flags, and non-message features; skip for routine get/list
 - [references/targets.md](references/targets.md): channel/timestamp targeting or
   multi-workspace ambiguity
-- [references/output.md](references/output.md): exact JSON fields, receipts,
+- [references/output.md](references/output.md): exact JSON fields,
   scheduled/draft/canvas/thread results, caches, and downloads when unclear
 
 Do not load every reference merely because a command returns JSON.

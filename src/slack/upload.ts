@@ -22,7 +22,6 @@ export type SlackFileUploadResult = {
 async function stageFileUpload(input: {
   client: SlackApiClient;
   filePath: string;
-  beforeUpload?: () => Promise<void>;
 }): Promise<{ fileId: string; filename: string }> {
   const resolvedPath = await realpath(input.filePath);
   const fileStats = await stat(resolvedPath);
@@ -37,8 +36,6 @@ async function stageFileUpload(input: {
 
   const bytes = await readFile(resolvedPath);
   const filename = basename(resolvedPath);
-
-  await input.beforeUpload?.();
 
   const uploadInitResp = await input.client.api("files.getUploadURLExternal", {
     filename,
@@ -109,16 +106,11 @@ export async function uploadLocalFileToSlack(input: {
   filePath: string;
   threadTs?: string;
   initialComment?: string;
-  beforeUpload?: () => Promise<void>;
-  beforeComplete?: () => Promise<void>;
 }): Promise<SlackFileUploadResult> {
   const { fileId, filename } = await stageFileUpload({
     client: input.client,
     filePath: input.filePath,
-    beforeUpload: input.beforeUpload,
   });
-
-  await input.beforeComplete?.();
 
   const completeResp = await input.client.api("files.completeUploadExternal", {
     files: [{ id: fileId, title: filename }],

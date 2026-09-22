@@ -1,7 +1,5 @@
-import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import { exportOwnMessages, parseExactSlackTimestamp } from "../src/slack/own-message-export.ts";
-import { canonicalSlackTextContentSha256 } from "../src/slack/content-identity.ts";
 
 type ApiCall = { method: string; params: Record<string, unknown> };
 
@@ -137,22 +135,16 @@ describe("own-message export", () => {
           channel_id: "C11111111",
           ts: oldest,
           content: "my own [link](https://example.com)",
-          content_sha256: createHash("sha256").update(publicRawText).digest("hex"),
-          canonical_content_sha256: canonicalSlackTextContentSha256(publicRawText),
         },
         {
           channel_id: "G11111111",
           ts: middle,
           content: "private channel text",
-          content_sha256: createHash("sha256").update("private channel text").digest("hex"),
-          canonical_content_sha256: canonicalSlackTextContentSha256("private channel text"),
         },
         {
           channel_id: "C22222222",
           ts: latest,
           content: "inclusive latest",
-          content_sha256: createHash("sha256").update("inclusive latest").digest("hex"),
-          canonical_content_sha256: canonicalSlackTextContentSha256("inclusive latest"),
         },
       ],
     });
@@ -175,11 +167,6 @@ describe("own-message export", () => {
     expect(calls.some((call) => call.method === "files.info")).toBe(false);
     expect(result.messages[0]?.content).not.toContain("not mine");
     expect(result.messages[0]?.content).not.toContain("forwarded");
-    expect(result.messages[0]?.content_sha256).not.toBe(
-      createHash("sha256")
-        .update(result.messages[0]?.content ?? "")
-        .digest("hex"),
-    );
   });
 
   test("marks a bounded export incomplete when the explicit page cap is reached", async () => {
@@ -219,12 +206,7 @@ describe("own-message export", () => {
     expect(result.complete).toBe(false);
     expect(result.latest).toBeNull();
     expect(result.messages).toHaveLength(1);
-    expect(result.messages[0]?.content_sha256).toBe(
-      createHash("sha256").update("first page").digest("hex"),
-    );
-    expect(result.messages[0]?.canonical_content_sha256).toBe(
-      canonicalSlackTextContentSha256("first page"),
-    );
+    expect(result.messages[0]?.content).toBe("first page");
   });
 
   test("rejects malformed and reversed exact timestamp windows before Slack access", async () => {
