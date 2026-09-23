@@ -288,7 +288,7 @@ export async function fetchThread(
   const out: SlackMessageSummary[] = [];
   let cursor: string | undefined;
   const seenCursors = new Set<string>();
-  const seenTimestamps = new Set<string>();
+  const seenMessages = new Map<string, Record<string, unknown>>();
   let rootSeen = false;
   let reportedReplyCount: number | undefined;
 
@@ -307,12 +307,15 @@ export async function fetchThread(
         continue;
       }
       if (input.requireComplete) {
-        const isRoot = validateCompleteThreadMessage({
+        const kind = validateCompleteThreadMessage({
           message: m,
           threadTs: input.threadTs,
-          seenTimestamps,
+          seenMessages,
         });
-        if (isRoot) {
+        if (kind === "duplicate_root") {
+          continue;
+        }
+        if (kind === "root") {
           rootSeen = true;
           reportedReplyCount = readCompleteThreadRootReplyCount(m);
         }
@@ -351,7 +354,7 @@ export async function fetchThread(
     assertCompleteThreadRoot(rootSeen);
     assertCompleteThreadReplyCount({
       reported: reportedReplyCount,
-      actual: seenTimestamps.size - 1,
+      actual: seenMessages.size - 1,
     });
   }
 

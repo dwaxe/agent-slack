@@ -236,7 +236,57 @@ describe("fetchThread", () => {
     expect(callCount).toBe(2);
   });
 
-  test("rejects duplicate message timestamps across pages", async () => {
+  test("deduplicates an unchanged thread root repeated across pages", async () => {
+    const threadTs = "1700000000.000001";
+    let callCount = 0;
+    const client = {
+      api: async () => {
+        callCount += 1;
+        return callCount === 1
+          ? {
+              messages: [{ ts: threadTs, text: "root", user: "U11111111", reply_count: 1 }],
+              has_more: true,
+              response_metadata: { next_cursor: "cursor-1" },
+            }
+          : {
+              messages: [
+                {
+                  ts: threadTs,
+                  text: "root",
+                  user: "U11111111",
+                  reply_count: 1,
+                  latest_reply: "1700000001.000002",
+                  blocks: [
+                    {
+                      type: "section",
+                      block_id: "updated-block-id",
+                      text: { type: "mrkdwn", text: "root" },
+                    },
+                  ],
+                },
+                {
+                  ts: "1700000001.000002",
+                  thread_ts: threadTs,
+                  text: "reply",
+                  user: "U22222222",
+                },
+              ],
+              has_more: false,
+              response_metadata: { next_cursor: "" },
+            };
+      },
+    };
+
+    const messages = await fetchThread(client as never, {
+      channelId: "C12345678",
+      threadTs,
+      requireComplete: true,
+    });
+
+    expect(messages.map((message) => message.ts)).toEqual([threadTs, "1700000001.000002"]);
+  });
+
+  test("rejects repeated roots with different block mention evidence", async () => {
     const threadTs = "1700000000.000001";
     let callCount = 0;
     const client = {
@@ -249,7 +299,24 @@ describe("fetchThread", () => {
               response_metadata: { next_cursor: "cursor-1" },
             }
           : {
-              messages: [{ ts: threadTs, text: "duplicate root", user: "U11111111" }],
+              messages: [
+                {
+                  ts: threadTs,
+                  text: "root",
+                  user: "U11111111",
+                  blocks: [
+                    {
+                      type: "rich_text",
+                      elements: [
+                        {
+                          type: "rich_text_section",
+                          elements: [{ type: "user", user_id: "U22222222" }],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
               has_more: false,
               response_metadata: { next_cursor: "" },
             };
@@ -262,7 +329,69 @@ describe("fetchThread", () => {
         threadTs,
         requireComplete: true,
       }),
-    ).rejects.toThrow(`duplicate message timestamp ${threadTs}`);
+    ).rejects.toThrow("conflicting copies of the thread root");
+  });
+
+  test("rejects conflicting copies of a thread root across pages", async () => {
+    const threadTs = "1700000000.000001";
+    let callCount = 0;
+    const client = {
+      api: async () => {
+        callCount += 1;
+        return callCount === 1
+          ? {
+              messages: [{ ts: threadTs, text: "root", user: "U11111111" }],
+              has_more: true,
+              response_metadata: { next_cursor: "cursor-1" },
+            }
+          : {
+              messages: [{ ts: threadTs, text: "edited root", user: "U11111111" }],
+              has_more: false,
+              response_metadata: { next_cursor: "" },
+            };
+      },
+    };
+
+    await expect(
+      fetchThread(client as never, {
+        channelId: "C12345678",
+        threadTs,
+        requireComplete: true,
+      }),
+    ).rejects.toThrow("conflicting copies of the thread root");
+  });
+
+  test("rejects duplicate reply timestamps across pages", async () => {
+    const threadTs = "1700000000.000001";
+    const replyTs = "1700000001.000002";
+    let callCount = 0;
+    const client = {
+      api: async () => {
+        callCount += 1;
+        return callCount === 1
+          ? {
+              messages: [
+                { ts: threadTs, text: "root", user: "U11111111" },
+                { ts: replyTs, thread_ts: threadTs, text: "reply", user: "U22222222" },
+              ],
+              has_more: true,
+              response_metadata: { next_cursor: "cursor-1" },
+            }
+          : {
+              messages: [{ ts: replyTs, thread_ts: threadTs, text: "reply", user: "U22222222" }],
+              has_more: false,
+              response_metadata: { next_cursor: "" },
+            };
+      },
+    };
+
+    await expect(
+      fetchThread(client as never, {
+        channelId: "C12345678",
+        threadTs,
+        requireComplete: true,
+      }),
+    ).rejects.toThrow(`duplicate message timestamp ${replyTs}`);
   });
 
   test("rejects a terminal page that omits the requested thread root", async () => {

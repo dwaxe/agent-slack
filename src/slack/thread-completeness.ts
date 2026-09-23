@@ -1,5 +1,7 @@
 import { getString, isRecord } from "../lib/object-type-guards.ts";
+import { collectDirectMessageMentions } from "./message-mentions.ts";
 import { isUserId } from "./user-id.ts";
+import { isDeepStrictEqual } from "node:util";
 
 const SLACK_MESSAGE_TS_PATTERN = /^\d+\.\d{6}$/;
 const SLACK_BOT_ID_PATTERN = /^B[A-Z0-9]{8,}$/;
@@ -57,8 +59,8 @@ export function parseCompleteThreadPage(response: Record<string, unknown>): {
 export function validateCompleteThreadMessage(input: {
   message: Record<string, unknown>;
   threadTs: string;
-  seenTimestamps: Set<string>;
-}): boolean {
+  seenMessages: Map<string, Record<string, unknown>>;
+}): "root" | "reply" | "duplicate_root" {
   if (input.message.text !== undefined && typeof input.message.text !== "string") {
     throw completeThreadError("Slack returned a message with malformed text");
   }
@@ -89,22 +91,69 @@ export function validateCompleteThreadMessage(input: {
   if (!ts || !SLACK_MESSAGE_TS_PATTERN.test(ts)) {
     throw completeThreadError("Slack returned a message without a canonical timestamp");
   }
-  if (input.seenTimestamps.has(ts)) {
-    throw completeThreadError(`Slack returned duplicate message timestamp ${ts}`);
-  }
-  input.seenTimestamps.add(ts);
-
   const messageThreadTs = getString(input.message.thread_ts);
   if (ts === input.threadTs) {
     if (messageThreadTs !== undefined && messageThreadTs !== input.threadTs) {
       throw completeThreadError("Slack returned the thread root with mismatched thread_ts");
     }
-    return true;
+    const prior = input.seenMessages.get(ts);
+    if (prior !== undefined) {
+      if (!equivalentThreadRoots(prior, input.message)) {
+        throw completeThreadError("Slack returned conflicting copies of the thread root");
+      }
+      return "duplicate_root";
+    }
+    input.seenMessages.set(ts, input.message);
+    return "root";
+  }
+  if (input.seenMessages.has(ts)) {
+    throw completeThreadError(`Slack returned duplicate message timestamp ${ts}`);
   }
   if (messageThreadTs !== input.threadTs) {
     throw completeThreadError("Slack returned a message outside the requested thread");
   }
-  return false;
+  input.seenMessages.set(ts, input.message);
+  return "reply";
+}
+
+function stableThreadRoot(message: Record<string, unknown>): Record<string, unknown> {
+  const {
+    last_read: _lastRead,
+    latest_reply: _latestReply,
+    reactions: _reactions,
+    replies: _replies,
+    reply_count: _replyCount,
+    reply_users: _replyUsers,
+    reply_users_count: _replyUsersCount,
+    subscribed: _subscribed,
+    unread_count: _unreadCount,
+    unread_count_display: _unreadCountDisplay,
+    ...stable
+  } = message;
+  return stable;
+}
+
+function equivalentThreadRoots(
+  prior: Record<string, unknown>,
+  current: Record<string, unknown>,
+): boolean {
+  const priorStable = stableThreadRoot(prior);
+  const currentStable = stableThreadRoot(current);
+  if (isDeepStrictEqual(priorStable, currentStable)) {
+    return true;
+  }
+  const { blocks: _priorBlocks, ...priorWithoutBlocks } = priorStable;
+  const { blocks: _currentBlocks, ...currentWithoutBlocks } = currentStable;
+  if (!isDeepStrictEqual(priorWithoutBlocks, currentWithoutBlocks)) {
+    return false;
+  }
+  const priorEvidence = collectDirectMessageMentions(prior);
+  const currentEvidence = collectDirectMessageMentions(current);
+  return (
+    priorEvidence.complete &&
+    currentEvidence.complete &&
+    isDeepStrictEqual(priorEvidence, currentEvidence)
+  );
 }
 
 export function readCompleteThreadRootReplyCount(
