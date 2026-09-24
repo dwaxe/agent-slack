@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "commander";
+import { registerAuthCommand } from "../src/cli/auth-command.ts";
 import { registerCanvasCommand } from "../src/cli/canvas-command.ts";
 import { registerChannelCommand } from "../src/cli/channel-command.ts";
 import type { CliContext } from "../src/cli/context.ts";
@@ -9,6 +10,7 @@ import { registerSearchCommand } from "../src/cli/search-command.ts";
 import { registerUserCommand } from "../src/cli/user-command.ts";
 import { registerUserGroupCommand } from "../src/cli/usergroup-command.ts";
 import { registerThreadCommand } from "../src/cli/thread-command.ts";
+import { registerDescribeCommand } from "../src/cli/describe-command.ts";
 
 function findCommand(root: Command, ...path: string[]): Command {
   let current = root;
@@ -33,6 +35,7 @@ function optionDescription(command: Command, long: string): string {
 function buildProgram(): Command {
   const program = new Command();
   const ctx = {} as CliContext;
+  registerAuthCommand({ program, ctx });
   registerMessageCommand({ program, ctx });
   registerCanvasCommand({ program, ctx });
   registerChannelCommand({ program, ctx });
@@ -41,10 +44,28 @@ function buildProgram(): Command {
   registerUserGroupCommand({ program, ctx });
   registerThreadCommand({ program, ctx });
   registerSearchCommand({ program, ctx });
+  registerDescribeCommand(program);
   return program;
 }
 
 describe("agent-facing help contracts", () => {
+  test("deterministic agent paths are discoverable without a full catalog", () => {
+    const program = buildProgram();
+    const authCheck = findCommand(program, "auth", "check");
+    const context = findCommand(program, "message", "context");
+    const revalidate = findCommand(program, "message", "revalidate");
+    const batch = findCommand(program, "search", "batch");
+    const describe = findCommand(program, "describe");
+
+    expect(authCheck.description()).toContain("compact readiness receipt");
+    expect(context.description()).toContain("complete thread");
+    expect(revalidate.options.find((option) => option.long === "--snapshot")?.mandatory).toBe(true);
+    expect(revalidate.getOptionValue("download")).toBeUndefined();
+    expect(optionDescription(revalidate, "--download")).toContain("when changed");
+    expect(optionDescription(batch, "--max-results")).toContain("Maximum deduplicated results");
+    expect(describe.description()).toContain("machine-readable JSON");
+  });
+
   test("message list exposes opt-in notification mention evidence", () => {
     const program = buildProgram();
     const list = findCommand(program, "message", "list");

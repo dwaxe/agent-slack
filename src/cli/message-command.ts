@@ -15,6 +15,11 @@ import { registerMessageDraftCommand } from "./message-draft-command.ts";
 import { isSafeModeEnabled, redirectSendToDraft, safeModeBlockedError } from "./safe-mode.ts";
 import { collectOptionValue } from "./options.ts";
 import { registerMessageExportCommand } from "./message-export-command.ts";
+import {
+  handleMessageContext,
+  handleMessageRevalidate,
+  type MessageContextOptions,
+} from "./message-context.ts";
 
 export function registerMessageCommand(input: { program: Command; ctx: CliContext }): void {
   const safeModeActive = (): boolean =>
@@ -116,6 +121,63 @@ export function registerMessageCommand(input: { program: Command; ctx: CliContex
         process.exitCode = 1;
       }
     });
+
+  const addContextOptions = (command: Command, revalidation = false): Command => {
+    const configured = command
+      .option(
+        "--max-body-chars <n>",
+        "Max content characters per message (default 8000, -1 unlimited)",
+        "8000",
+      )
+      .option("--include-reactions", "Include reactions + reacting users")
+      .option("--resolve-users", "Resolve user IDs to user profiles")
+      .option(
+        "--refresh-users",
+        "Refresh user profile cache before resolving user IDs (implies --resolve-users)",
+      );
+    return revalidation
+      ? configured.option("--download", "Download attachment bodies when changed")
+      : configured.option("--no-download", "Keep attachment metadata without downloading bodies");
+  };
+
+  addContextOptions(
+    messageCmd
+      .command("context")
+      .description("Fetch one focal message and its complete thread with a revalidation snapshot")
+      .argument("<target>", "Exact Slack message permalink"),
+  ).action(async (...args) => {
+    const [targetInput, options] = args as [string, MessageContextOptions];
+    try {
+      const payload = await handleMessageContext({ ctx: input.ctx, targetInput, options });
+      console.log(JSON.stringify(payload, null, 2));
+    } catch (err: unknown) {
+      console.error(input.ctx.errorMessage(err));
+      process.exitCode = 1;
+    }
+  });
+
+  addContextOptions(
+    messageCmd
+      .command("revalidate")
+      .description("Return a small unchanged receipt or the changed complete thread")
+      .argument("<target>", "Exact Slack message permalink")
+      .requiredOption("--snapshot <snapshot>", "Snapshot returned by message context"),
+    true,
+  ).action(async (...args) => {
+    const [targetInput, options] = args as [string, MessageContextOptions & { snapshot: string }];
+    try {
+      const payload = await handleMessageRevalidate({
+        ctx: input.ctx,
+        targetInput,
+        snapshot: options.snapshot,
+        options,
+      });
+      console.log(JSON.stringify(payload, null, 2));
+    } catch (err: unknown) {
+      console.error(input.ctx.errorMessage(err));
+      process.exitCode = 1;
+    }
+  });
 
   messageCmd
     .command("edit")

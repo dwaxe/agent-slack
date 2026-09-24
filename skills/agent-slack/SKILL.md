@@ -5,65 +5,66 @@ description: Use for any Slack request or Slack URL, including reads, searches, 
 
 # agent-slack
 
-Use `agent-slack` only for Slack API access. Before the first API call, run
-`agent-slack auth whoami`; if it is unavailable or unauthenticated, stop and
-ask the user to reauthenticate. Pure wording based entirely on user-provided
-context needs no Slack call.
+Use `agent-slack` only for Slack API access. Before the first API call, pin one
+workspace. When its URL is known, run `agent-slack auth check --workspace
+<url>`; otherwise use `auth whoami` for discovery, then check the selected
+workspace. If authentication is unavailable, stop and ask the user to
+reauthenticate. Pure wording from user-provided context needs no Slack call.
 
-## Core Contract
+## Contract
 
 - Read and search freely. “Answer,” “reply,” or “respond” authorizes
   investigation and a draft, never posting.
-- Every Slack state change requires an explicit request, including sends,
-  uploads, edits, deletes, reactions, compose/draft/schedule actions, channel or
-  DM changes, Later, canvases, thread subscriptions, and workflows. Workflow
-  runs may execute downstream actions.
-- Before a human-facing send or edit, show the exact workspace, target, action,
-  and final Slack-visible content and obtain approval. In drafts, approval
-  prompts, and delivery summaries, render verified mentions as readable Slack
-  usernames or handles; keep raw mention markup such as `<@U...>` and
-  `<!subteam^S...>` internal unless the user asks to see it. Any target, visible
-  content, resolved recipient, or other payload change invalidates that
-  approval. Treat `message compose` as a send.
-- Pin one workspace and prefer exact permalinks. Never combine message, search,
-  channel, or identity evidence across workspaces or broaden DM/private evidence
-  without authorization.
-- Never scan the user directory to resolve a mention. Resolve each complete
-  intended batch directly in one workspace: people by canonical ID or email,
-  and user groups separately by exact ID or handle. A loaded workflow may
-  instead supply an exact person ID from its checked-in, tested
-  `trusted_static` identity map for that workspace. Use no partial batch.
-- With `AGENT_SLACK_SAFE_MODE=1` or `--safe-mode`, sends use the draft editor,
-  CI compose is blocked, and edits and deletes are blocked.
-- Do not mutate Jira, code review, CI, rollout, or another linked system unless
-  separately requested.
-- Before a write, check `agent-slack --version` and that command's installed
-  `--help`. Afterward, verify the returned state as described in the relevant
-  reference.
-- Scheduling uses Slack's server-side feature: standard tokens call
-  `chat.scheduleMessage`, while browser auth creates a native scheduled draft.
-  Browser-auth schedules accept only non-empty top-level `rich_text` blocks.
+- Every Slack state change requires an explicit request. Before a human-facing
+  send or edit, show the exact workspace, target, action, and final
+  Slack-visible content and obtain approval. Any target, visible content,
+  resolved recipient, or payload change invalidates approval. `message compose`
+  is a send.
+- Render verified mentions readably for approval, but keep `<@U...>` and
+  `<!subteam^S...>` markup internal unless requested.
+- Prefer exact permalinks. Never combine evidence across workspaces or broaden
+  DM/private evidence without authorization.
+- Never scan the user directory to resolve a mention. Resolve the complete
+  intended batch directly in one workspace: people by canonical ID or email;
+  user groups by exact ID or handle. A tested workflow may use a checked-in
+  `trusted_static` identity map. Use no partial batch.
+- Safe mode redirects sends to drafts, blocks CI compose, and blocks edits and
+  deletes.
+- Do not mutate linked systems unless separately requested.
+- Before a write, check `agent-slack --version` and run `agent-slack describe
+<command path>` (or that command's `--help`). Afterward, verify the returned
+  state as required by the relevant reference.
 
-## Quick Read
+## Efficient paths
 
 ```bash
-agent-slack message get "$SLACK_URL" --resolve-users
-agent-slack message list "$SLACK_URL" --resolve-users
+# One focal message plus its complete thread and a revalidation token
+agent-slack message context "$SLACK_URL" --resolve-users
+
+# Just before an approved write; unchanged output omits the thread body
+agent-slack message revalidate "$SLACK_URL" --snapshot "$SNAPSHOT"
+
+# Several bounded searches in one invocation; input is a JSON string array
+agent-slack search batch queries.json --workspace "$WORKSPACE"
+
+# Load one command contract, not the full catalog
+agent-slack describe message send
 ```
 
-The first command identifies the focal message; the second returns its thread.
+Use `message get/list` only when their narrower or channel-history behavior is
+actually needed. Deduplicate search queries before running them; hydrate only
+the resulting exact permalinks that matter.
 
-## Load Only What the Task Needs
+## Load only what the task needs
 
 - [references/thread-investigation.md](references/thread-investigation.md):
-  thread meaning, claim verification, action advice, or reply drafting
+  thread meaning, claim verification, drafting, and revalidation
 - [references/message-formatting.md](references/message-formatting.md): links,
-  lists, rich text, attachments, Block Kit, edits, and write verification
-- [references/mentions.md](references/mentions.md): any person or user-group
-  notification
-- [references/commands.md](references/commands.md): authentication recovery,
-  unfamiliar flags, and non-message features
-- [references/targets.md](references/targets.md): channel/timestamp targeting or
+  lists, blocks, attachments, edits, and write verification
+- [references/mentions.md](references/mentions.md): any notification
+- [references/commands.md](references/commands.md): auth recovery and unusual
+  command families
+- [references/targets.md](references/targets.md): non-permalink targets and
   multi-workspace ambiguity
-- [references/output.md](references/output.md): exact JSON fields,
-  scheduled/draft/canvas/thread results, caches, and downloads when unclear
+- [references/output.md](references/output.md): result guarantees, downloads,
+  caches, schedules, drafts, and canvases

@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import type { CliContext } from "./context.ts";
 import { pruneEmpty } from "../lib/compact-json.ts";
 import { searchSlack } from "../slack/search.ts";
+import { readBatchQueries, runBatchSearch, type SearchBatchOptions } from "./search-batch.ts";
 
 type SearchCommandOptions = {
   workspace?: string;
@@ -138,4 +139,32 @@ export function registerSearchCommand(input: { program: Command; ctx: CliContext
   create({ kind: "all", name: "all", desc: "Search messages and files" });
   create({ kind: "messages", name: "messages", desc: "Search messages" });
   create({ kind: "files", name: "files", desc: "Search files" });
+
+  searchCmd
+    .command("batch")
+    .description("Run bounded message queries and return deduplicated verified refs")
+    .argument("<queries-file>", "JSON array of query strings, or '-' for stdin")
+    .option(
+      "--workspace <url>",
+      "Workspace selector (full URL or unique substring; needed with multiple workspaces)",
+    )
+    .option("--user <user>", "User filter (U.../W..., @handle, or handle)")
+    .option("--after <date>", "Only results after YYYY-MM-DD")
+    .option("--before <date>", "Only results before YYYY-MM-DD")
+    .option("--limit <n>", "Max results per query (default 20, max 200)", "20")
+    .option("--max-results <n>", "Maximum deduplicated results (default 200, max 1000)", "200")
+    .action(async (...args) => {
+      const [queriesFile, options] = args as [string, SearchBatchOptions];
+      try {
+        const payload = await runBatchSearch({
+          ctx: input.ctx,
+          queries: readBatchQueries(queriesFile),
+          options,
+        });
+        console.log(JSON.stringify(pruneEmpty(payload), null, 2));
+      } catch (err: unknown) {
+        console.error(input.ctx.errorMessage(err));
+        process.exitCode = 1;
+      }
+    });
 }

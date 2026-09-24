@@ -66,6 +66,7 @@ bash ./scripts/install-skill.sh
 ```text
 agent-slack
 ├── auth
+│   ├── check                     # compact workspace readiness receipt
 │   ├── whoami
 │   ├── test
 │   ├── import-desktop
@@ -74,6 +75,8 @@ agent-slack
 │   ├── import-firefox
 │   └── parse-curl
 ├── message
+│   ├── context <permalink>        # focal message + complete thread + snapshot
+│   ├── revalidate <permalink>     # compact unchanged receipt or fresh context
 │   ├── get   <target>             # fetch 1 message (+ thread meta )
 │   ├── list  <target>             # fetch thread or recent channel messages
 │   ├── send  <target> [text]      # send / reply / schedule (supports --attach, --blocks)
@@ -108,7 +111,8 @@ agent-slack
 ├── search
 │   ├── all      <query>           # messages + files
 │   ├── messages <query>
-│   └── files    <query>
+│   ├── files    <query>
+│   └── batch    <queries-file>    # bounded queries, deduplicated exact refs
 ├── workflow
 │   ├── list    <channel>          # workflows bookmarked in a channel
 │   ├── preview <trigger-id>       # trigger metadata (no side effects)
@@ -118,6 +122,8 @@ agent-slack
     ├── create                     # markdown file/blob → canvas
     ├── edit <canvas-url-or-id>    # replace/insert/delete/rename a canvas
     └── get <canvas-url-or-id>     # canvas → markdown
+
+agent-slack describe <command path...> # compact machine-readable command contract
 ```
 
 Notes:
@@ -135,6 +141,7 @@ On macOS and Windows, authentication happens automatically:
 You can also run manual imports:
 
 ```bash
+agent-slack auth check --workspace "https://workspace.slack.com"
 agent-slack auth whoami
 agent-slack auth import-desktop
 agent-slack auth import-brave
@@ -199,6 +206,15 @@ agent-slack message get "https://workspace.slack.com/archives/C123/p170000000000
 
 # Full thread for a message
 agent-slack message list "https://workspace.slack.com/archives/C123/p1700000000000000"
+
+# Focal message + complete thread + snapshot in one deterministic read
+agent-slack message context \
+  "https://workspace.slack.com/archives/C123/p1700000000000000"
+
+# Just before a write: unchanged output omits the thread body
+agent-slack message revalidate \
+  "https://workspace.slack.com/archives/C123/p1700000000000000" \
+  --snapshot "$SNAPSHOT"
 
 # Recent channel messages (browse channel history)
 agent-slack message list "#general" --limit 20
@@ -581,10 +597,17 @@ agent-slack search messages "stably ai" --user "@stablyai" --channel general
 
 # Search files only (downloads files and returns local paths)
 agent-slack search files "testing" --content-type snippet --limit 10
+
+# Run several strict metadata-only searches and deduplicate overlapping refs
+printf '%s' '["worker incident", "owner:me rollback"]' |
+  agent-slack search batch - --workspace "https://workspace.slack.com"
 ```
 
 Tips:
 
+- Prefer `search batch` when several bounded queries are known up front. It runs
+  them in one workspace, rejects incomplete result sets, and reports which
+  zero-based query indexes matched each deduplicated message.
 - For reliable results, include `--channel ...` (channel-scoped search scans history/files and filters locally).
 - Use `--workspace <url-or-unique-substring>` when using `#channel` names across multiple workspaces.
 

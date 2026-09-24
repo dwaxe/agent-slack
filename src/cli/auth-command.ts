@@ -9,6 +9,8 @@ import {
 } from "../auth/store.ts";
 import { pruneEmpty } from "../lib/compact-json.ts";
 import { redactSecret } from "../lib/redact.ts";
+import { getString, isRecord } from "../lib/object-type-guards.ts";
+import { isUserId } from "../slack/user-id.ts";
 
 async function runAuthTest(input: {
   ctx: CliContext;
@@ -23,8 +25,71 @@ async function runAuthTest(input: {
   });
 }
 
+export async function handleAuthCheck(input: {
+  ctx: CliContext;
+  workspace?: string;
+}): Promise<Record<string, unknown>> {
+  const workspaceUrl = input.ctx.effectiveWorkspaceUrl(input.workspace);
+  return await input.ctx.withAutoRefresh({
+    workspaceUrl,
+    work: async () => {
+      const {
+        client,
+        auth: resolvedAuth,
+        workspace_url,
+      } = await input.ctx.getClientForWorkspace(workspaceUrl);
+      const response = await client.api("auth.test", {});
+      if (!isRecord(response)) {
+        throw new Error("Slack auth.test returned an invalid response");
+      }
+      const teamId = getString(response.team_id)?.trim();
+      const userId = getString(response.user_id)?.trim();
+      const authenticatedUrl = getString(response.url)?.trim();
+      if (!teamId) {
+        throw new Error("Slack auth.test did not return team_id");
+      }
+      if (!userId || !isUserId(userId)) {
+        throw new Error("Slack auth.test did not return a canonical user_id");
+      }
+      if (!authenticatedUrl) {
+        throw new Error("Slack auth.test did not return a workspace URL");
+      }
+      const actualWorkspace = input.ctx.normalizeUrl(authenticatedUrl);
+      const expectedWorkspace = input.ctx.normalizeUrl(workspace_url ?? actualWorkspace);
+      if (new URL(actualWorkspace).origin !== new URL(expectedWorkspace).origin) {
+        throw new Error("Slack authentication resolved to a different workspace than requested");
+      }
+      return {
+        ok: true,
+        workspace_url: new URL(actualWorkspace).origin,
+        team_id: teamId,
+        user_id: userId,
+        auth_type: resolvedAuth.auth_type,
+      };
+    },
+  });
+}
+
 export function registerAuthCommand(input: { program: Command; ctx: CliContext }): void {
   const auth = input.program.command("auth").description("Manage Slack authentication");
+
+  auth
+    .command("check")
+    .description("Verify one workspace and return a compact readiness receipt")
+    .option(
+      "--workspace <url>",
+      "Workspace selector (full URL or unique substring; needed with multiple workspaces)",
+    )
+    .action(async (...args) => {
+      const [options] = args as [{ workspace?: string }];
+      try {
+        const payload = await handleAuthCheck({ ctx: input.ctx, workspace: options.workspace });
+        console.log(JSON.stringify(payload));
+      } catch (err: unknown) {
+        console.error(input.ctx.errorMessage(err));
+        process.exitCode = 1;
+      }
+    });
 
   auth
     .command("whoami")
