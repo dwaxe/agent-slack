@@ -161,7 +161,7 @@ export function registerSearchCommand(input: { program: Command; ctx: CliContext
           queries: readBatchQueries(queriesFile),
           options,
         });
-        console.log(JSON.stringify(pruneEmpty(payload), null, 2));
+        console.log(JSON.stringify(pruneEmpty(payload)));
       } catch (err: unknown) {
         console.error(input.ctx.errorMessage(err));
         process.exitCode = 1;

@@ -38,23 +38,23 @@ type SnapshotClaims = {
   digest: string;
 };
 
-function stableThreadDigest(messages: Awaited<ReturnType<typeof fetchThread>>): string {
+function stableThreadDigest(
+  messages: Awaited<ReturnType<typeof fetchThread>>,
+  input: { includeReactions: boolean },
+): string {
   const stable = messages.map((message) => ({
     ts: message.ts,
     author: { user_id: message.user, bot_id: message.bot_id },
     content: renderSlackMessageContent(message),
-    files: (message.files ?? []).map((file) => ({
-      id: file.id,
-      name: file.name,
-      mimetype: file.mimetype,
-      mode: file.mode,
-    })),
-    reactions: (compactReactions(message.reactions) ?? [])
-      .map((reaction) => ({
-        ...reaction,
-        users: [...reaction.users].sort(),
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name)),
+    file_ids: (message.files ?? []).map((file) => file.id).sort(),
+    reactions: input.includeReactions
+      ? (compactReactions(message.reactions) ?? [])
+          .map((reaction) => ({
+            ...reaction,
+            users: [...reaction.users].sort(),
+          }))
+          .sort((left, right) => left.name.localeCompare(right.name))
+      : undefined,
   }));
   return createHash("sha256").update(JSON.stringify(stable), "utf8").digest("hex");
 }
@@ -182,7 +182,7 @@ export async function handleMessageContext(input: {
         latest_ts: latestTs,
         message_count: threadMessages.length,
         include_reactions: includeReactions,
-        digest: stableThreadDigest(threadMessages),
+        digest: stableThreadDigest(threadMessages, { includeReactions }),
       };
       return pruneEmpty({
         workspace_url: claims.workspace_url,

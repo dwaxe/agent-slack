@@ -62,6 +62,7 @@ describe("agent-facing help contracts", () => {
     expect(revalidate.options.find((option) => option.long === "--snapshot")?.mandatory).toBe(true);
     expect(revalidate.getOptionValue("download")).toBeUndefined();
     expect(optionDescription(revalidate, "--download")).toContain("when changed");
+    expect(revalidate.options.some((option) => option.long === "--include-reactions")).toBe(false);
     expect(optionDescription(batch, "--max-results")).toContain("Maximum deduplicated results");
     expect(describe.description()).toContain("machine-readable JSON");
   });

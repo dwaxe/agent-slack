@@ -123,18 +123,20 @@ export function registerMessageCommand(input: { program: Command; ctx: CliContex
     });
 
   const addContextOptions = (command: Command, revalidation = false): Command => {
-    const configured = command
+    let configured = command
       .option(
         "--max-body-chars <n>",
         "Max content characters per message (default 8000, -1 unlimited)",
         "8000",
       )
-      .option("--include-reactions", "Include reactions + reacting users")
       .option("--resolve-users", "Resolve user IDs to user profiles")
       .option(
         "--refresh-users",
         "Refresh user profile cache before resolving user IDs (implies --resolve-users)",
       );
+    if (!revalidation) {
+      configured = configured.option("--include-reactions", "Include reactions + reacting users");
+    }
     return revalidation
       ? configured.option("--download", "Download attachment bodies when changed")
       : configured.option("--no-download", "Keep attachment metadata without downloading bodies");
@@ -149,7 +151,7 @@ export function registerMessageCommand(input: { program: Command; ctx: CliContex
     const [targetInput, options] = args as [string, MessageContextOptions];
     try {
       const payload = await handleMessageContext({ ctx: input.ctx, targetInput, options });
-      console.log(JSON.stringify(payload, null, 2));
+      console.log(JSON.stringify(payload));
     } catch (err: unknown) {
       console.error(input.ctx.errorMessage(err));
       process.exitCode = 1;
@@ -172,7 +174,7 @@ export function registerMessageCommand(input: { program: Command; ctx: CliContex
         snapshot: options.snapshot,
         options,
       });
-      console.log(JSON.stringify(payload, null, 2));
+      console.log(JSON.stringify(payload));
     } catch (err: unknown) {
       console.error(input.ctx.errorMessage(err));
       process.exitCode = 1;
