@@ -58,7 +58,7 @@ export function registerDescribeCommand(program: Command): void {
     .argument("<path...>", "Command path, for example: message list")
     .action((path: string[]) => {
       try {
-        console.log(JSON.stringify(buildCommandDescription(program, path), null, 2));
+        console.log(JSON.stringify(buildCommandDescription(program, path)));
       } catch (err: unknown) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;

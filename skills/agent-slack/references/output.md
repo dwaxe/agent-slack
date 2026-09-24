@@ -13,7 +13,8 @@ closed when a required field below is absent.
   and an opaque `snapshot`. It fails instead of returning a partial thread.
 - `message revalidate` returns `unchanged: true` plus a replacement snapshot and
   boundaries when content is identical. On change it returns `unchanged: false`
-  plus the fresh complete context.
+  plus the fresh complete context. Attachment bodies are not downloaded unless
+  `--download` is passed.
 - `search batch` returns `metadata_only: true`, the normalized query list, and
   deduplicated exact message refs. Each ref has `matched_queries`, containing
   zero-based indexes into `queries`. It fails on malformed/incomplete results or
@@ -56,7 +57,7 @@ produce no live mention token.
 
 ## Attachments
 
-Reads download attachments by default to an agent temp directory and return
+Reads other than `message revalidate` download attachments by default to an agent temp directory and return
 absolute `path` values. Failed message attachment downloads retain metadata,
 `error`, and a `.download-error.txt` path. File-search failures may be skipped
 with a warning, so absence is not proof no match exists; retry from the source

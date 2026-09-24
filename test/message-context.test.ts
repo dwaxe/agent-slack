@@ -8,16 +8,17 @@ import {
 
 const target = "https://workspace.slack.com/archives/C12345678/p1700000000000001";
 
-function buildContext(
-  replyText = "reply",
-  reactions: unknown[] = [{ name: "eyes", users: ["U11111111"], count: 1 }],
-) {
+function buildContext(input?: { replyText?: string; reactions?: unknown[]; files?: unknown[] }) {
+  const replyText = input?.replyText ?? "reply";
+  const reactions = input?.reactions ?? [{ name: "eyes", users: ["U11111111"], count: 1 }];
+  const files = input?.files ?? [];
   const root = {
     ts: "1700000000.000001",
     text: "root",
     user: "U11111111",
     reply_count: 1,
     reactions,
+    files,
   };
   const reply = {
     ts: "1700000001.000002",
@@ -126,7 +127,7 @@ describe("message context snapshots", () => {
       options,
     });
     const current = await handleMessageRevalidate({
-      ctx: buildContext("edited reply").ctx,
+      ctx: buildContext({ replyText: "edited reply" }).ctx,
       targetInput: target,
       snapshot: String(initial.snapshot),
       options,
@@ -147,10 +148,12 @@ describe("message context snapshots", () => {
       options,
     });
     const current = await handleMessageRevalidate({
-      ctx: buildContext("reply", [
-        { name: "eyes", users: ["U11111111"], count: 1 },
-        { name: "plus_two", users: ["U22222222"], count: 1 },
-      ]).ctx,
+      ctx: buildContext({
+        reactions: [
+          { name: "eyes", users: ["U11111111"], count: 1 },
+          { name: "plus_two", users: ["U22222222"], count: 1 },
+        ],
+      }).ctx,
       targetInput: target,
       snapshot: String(initial.snapshot),
       options: { maxBodyChars: "8000" },
@@ -161,6 +164,52 @@ describe("message context snapshots", () => {
       expect.objectContaining({ reactions: expect.arrayContaining([expect.any(Object)]) }),
       expect.objectContaining({ content: "reply" }),
     ]);
+  });
+
+  test("ignores reaction changes when the snapshot omitted reactions", async () => {
+    const withoutReactions = { maxBodyChars: "8000", download: false };
+    const initial = await handleMessageContext({
+      ctx: buildContext().ctx,
+      targetInput: target,
+      options: withoutReactions,
+    });
+    const current = await handleMessageRevalidate({
+      ctx: buildContext({
+        reactions: [
+          { name: "eyes", users: ["U11111111"], count: 1 },
+          { name: "plus_two", users: ["U22222222"], count: 1 },
+        ],
+      }).ctx,
+      targetInput: target,
+      snapshot: String(initial.snapshot),
+      options: withoutReactions,
+    });
+
+    expect(current.unchanged).toBe(true);
+  });
+
+  test("ignores file metadata enrichment differences for the same attachment IDs", async () => {
+    const initial = await handleMessageContext({
+      ctx: buildContext({
+        reactions: [],
+        files: [{ id: "F11111111", name: "initial.txt", mimetype: "text/plain", mode: "snippet" }],
+      }).ctx,
+      targetInput: target,
+      options: { maxBodyChars: "8000", download: false },
+    });
+    const current = await handleMessageRevalidate({
+      ctx: buildContext({
+        reactions: [],
+        files: [
+          { id: "F11111111", name: "enriched.txt", mimetype: "text/markdown", mode: "snippet" },
+        ],
+      }).ctx,
+      targetInput: target,
+      snapshot: String(initial.snapshot),
+      options: { maxBodyChars: "8000" },
+    });
+
+    expect(current.unchanged).toBe(true);
   });
 
   test("rejects a snapshot for another message", async () => {
