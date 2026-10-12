@@ -1,5 +1,5 @@
 import type { SlackMessageRef } from "./url.ts";
-import type { SlackApiClient } from "./client.ts";
+import { isSlackRateLimitedError, type SlackApiClient } from "./client.ts";
 import { asArray, getString, isRecord } from "../lib/object-type-guards.ts";
 import { enrichFiles, toSlackFileSummary, toSlackMessageSummary } from "./message-api-parsing.ts";
 import {
@@ -92,7 +92,10 @@ export async function fetchMessage(
       if (isRecord(root) && getString(root.ts) === input.ref.message_ts) {
         msg = root;
       }
-    } catch {
+    } catch (error) {
+      if (isSlackRateLimitedError(error)) {
+        throw error;
+      }
       // ignore
     }
   }

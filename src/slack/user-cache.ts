@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { getAppDir } from "../lib/app-dir.ts";
 import { readJsonFile } from "../lib/fs.ts";
 import { asArray, isRecord } from "../lib/object-type-guards.ts";
-import type { SlackApiClient } from "./client.ts";
+import { isSlackRateLimitedError, type SlackApiClient } from "./client.ts";
 import type { SlackMessageSummary } from "./messages.ts";
 import { toCompactUser, type CompactSlackUser } from "./users.ts";
 import { isUserId } from "./user-id.ts";
@@ -286,7 +286,7 @@ async function fetchUserById(input: {
     const compact = toCompactUser(user);
     return compact.id === input.userId ? compact : undefined;
   } catch (error) {
-    if (input.throwOnError) {
+    if (isSlackRateLimitedError(error) || input.throwOnError) {
       throw error;
     }
     return undefined;

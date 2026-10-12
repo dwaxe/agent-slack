@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { WebClient } from "@slack/web-api";
+import { ErrorCode, WebClient } from "@slack/web-api";
 import { getUserAgent } from "../lib/version.ts";
 import {
   normalizeSlackWorkspaceUrl,
@@ -51,8 +51,32 @@ function slackRateLimitError(input: {
   retryAfterSec: number;
   maxWaitMs: number;
 }): Error {
-  return new Error(
-    `Slack API call ${input.method} was rate limited; retry-after ${input.retryAfterSec}s exceeds AGENT_SLACK_RATE_LIMIT_MAX_WAIT_MS=${input.maxWaitMs}.`,
+  return Object.assign(
+    new Error(
+      `Slack API call ${input.method} was rate limited; retry-after ${input.retryAfterSec}s exceeds AGENT_SLACK_RATE_LIMIT_MAX_WAIT_MS=${input.maxWaitMs}.`,
+    ),
+    { code: ErrorCode.RateLimitedError, retryAfter: input.retryAfterSec },
+  );
+}
+
+export function isSlackRateLimitedError(error: unknown): boolean {
+  if (!isRecord(error)) {
+    return false;
+  }
+  if (
+    error.code === ErrorCode.RateLimitedError ||
+    (error.code === ErrorCode.HTTPError && error.statusCode === 429) ||
+    (error.code === ErrorCode.PlatformError &&
+      isRecord(error.data) &&
+      (error.data.error === "ratelimited" || error.data.error === "rate_limited"))
+  ) {
+    return true;
+  }
+  const message = typeof error.message === "string" ? error.message : "";
+  return (
+    message === "rate_limited" ||
+    message === "ratelimited" ||
+    /^Slack HTTP 429 calling [A-Za-z][A-Za-z0-9_.]*$/.test(message)
   );
 }
 

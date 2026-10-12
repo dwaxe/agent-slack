@@ -1,4 +1,4 @@
-import type { SlackApiClient } from "./client.ts";
+import { isSlackRateLimitedError, type SlackApiClient } from "./client.ts";
 import { asArray, getString, isRecord } from "../lib/object-type-guards.ts";
 import { isUserId } from "./user-id.ts";
 
@@ -108,7 +108,10 @@ export async function resolveUserId(client: SlackApiClient, input: string): Prom
       if (userId) {
         return userId;
       }
-    } catch {
+    } catch (error) {
+      if (isSlackRateLimitedError(error)) {
+        throw error;
+      }
       // Fallback to users.list scan below.
     }
   }

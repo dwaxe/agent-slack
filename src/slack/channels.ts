@@ -1,4 +1,4 @@
-import type { SlackApiClient } from "./client.ts";
+import { isSlackRateLimitedError, type SlackApiClient } from "./client.ts";
 import { asArray, getString, isRecord } from "../lib/object-type-guards.ts";
 
 const DEFAULT_CONVERSATION_TYPES = "public_channel,private_channel,im,mpim";
@@ -71,7 +71,10 @@ export async function resolveChannelId(client: SlackApiClient, input: string): P
         return channelId;
       }
     }
-  } catch {
+  } catch (error) {
+    if (isSlackRateLimitedError(error)) {
+      throw error;
+    }
     // search may fail (e.g. token lacks search:read scope) — fall through to pagination
   }
 
@@ -129,7 +132,10 @@ export async function resolveChannelName(
           if (isRecord(profile)) {
             return getString(profile.display_name) || getString(profile.real_name) || channelId;
           }
-        } catch {
+        } catch (error) {
+          if (isSlackRateLimitedError(error)) {
+            throw error;
+          }
           // fall through
         }
       }
@@ -137,7 +143,10 @@ export async function resolveChannelName(
     }
 
     return getString(channel.name) || channelId;
-  } catch {
+  } catch (error) {
+    if (isSlackRateLimitedError(error)) {
+      throw error;
+    }
     return channelId;
   }
 }

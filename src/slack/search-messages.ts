@@ -1,4 +1,4 @@
-import type { SlackApiClient, SlackAuth } from "./client.ts";
+import { isSlackRateLimitedError, type SlackApiClient, type SlackAuth } from "./client.ts";
 import type { CompactSlackMessage, SlackMessageSummary } from "./messages.ts";
 import { fetchMessage, toCompactMessage } from "./messages.ts";
 import { resolveChannelId } from "./channels.ts";
@@ -78,6 +78,9 @@ export async function searchMessagesViaSearchApi(
       try {
         channelId = await resolveChannelId(client, `#${getString(channelValue.name)}`);
       } catch (err: unknown) {
+        if (isSlackRateLimitedError(err)) {
+          throw err;
+        }
         if (input.requireCompleteResults || input.metadataOnly) {
           throw new Error("Slack search returned an unresolvable message channel", { cause: err });
         }
@@ -187,6 +190,9 @@ export async function searchMessagesViaSearchApi(
         },
       });
     } catch (err: unknown) {
+      if (isSlackRateLimitedError(err)) {
+        throw err;
+      }
       if (input.requireCompleteResults) {
         throw new Error(
           `Could not fetch complete Slack search result ${ref.channel_id}:${ref.message_ts}`,

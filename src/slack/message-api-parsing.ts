@@ -1,4 +1,4 @@
-import type { SlackApiClient } from "./client.ts";
+import { isSlackRateLimitedError, type SlackApiClient } from "./client.ts";
 import type { SlackFileSummary, SlackMessageSummary } from "./messages.ts";
 import { getNumber, getString, isRecord } from "../lib/object-type-guards.ts";
 import { slackMrkdwnToMarkdown } from "./mrkdwn.ts";
@@ -80,7 +80,10 @@ export async function enrichFiles(
           },
         });
         continue;
-      } catch {
+      } catch (error) {
+        if (isSlackRateLimitedError(error)) {
+          throw error;
+        }
         // ignore and fall back to summary
       }
     }
