@@ -7,6 +7,47 @@ type StrictMessagePaging = {
   target: number;
 };
 
+// Search totals are estimates and nearby matches may be collapsed. Cursor
+// exhaustion, rather than the number of returned rows, proves traversal.
+function readStrictMessageCursor(input: {
+  messages: Record<string, unknown>;
+  pageSize: number;
+  responseMetadata: unknown;
+}): string | undefined {
+  const { messages, pageSize, responseMetadata } = input;
+  const { paging } = messages;
+  const { pagination } = messages;
+  const containers = [paging, pagination, responseMetadata].filter(isRecord);
+  const cursors = containers
+    .filter((value) => Object.hasOwn(value, "next_cursor"))
+    .map((value) => value.next_cursor);
+  if (cursors.length === 0) {
+    return undefined;
+  }
+  if (
+    !isRecord(paging) ||
+    !Number.isInteger(paging.count) ||
+    paging.count !== pageSize ||
+    !Number.isInteger(paging.total) ||
+    Number(paging.total) < 0 ||
+    (messages.total !== undefined && messages.total !== paging.total) ||
+    (pagination !== undefined &&
+      (!isRecord(pagination) ||
+        pagination.total_count !== paging.total ||
+        pagination.per_page !== pageSize)) ||
+    cursors.some(
+      (cursor) =>
+        typeof cursor !== "string" ||
+        cursor.length > 8192 ||
+        (cursor !== "" && !/^[\x21-\x7e]+$/.test(cursor)),
+    ) ||
+    cursors.some((cursor) => cursor !== cursors[0])
+  ) {
+    throw new Error("Slack search returned malformed or conflicting message cursor metadata");
+  }
+  return cursors[0] as string;
+}
+
 function readStrictMessagePaging(input: {
   messages: Record<string, unknown>;
   expectedPage: number;
@@ -72,12 +113,16 @@ export async function searchMessagesRaw(
   let page = 1;
   let pages = 1;
   let strictPaging: StrictMessagePaging | undefined;
+  let cursor: string | undefined = input.requireCompleteResults ? "*" : undefined;
+  let cursorPaging = false;
+  const seenCursors = new Set(["*"]);
+  const seenMessages = new Set<string>();
 
   for (;;) {
     const resp = await client.api("search.messages", {
       query: input.query,
       count: pageSize,
-      page,
+      ...(cursor === undefined ? { page } : { cursor }),
       highlight: false,
       sort: "timestamp",
       sort_dir: "desc",
@@ -94,6 +139,51 @@ export async function searchMessagesRaw(
     out.push(...matches);
 
     if (input.requireCompleteResults && isRecord(messages)) {
+      const nextCursor = readStrictMessageCursor({
+        messages,
+        pageSize,
+        responseMetadata: resp.response_metadata,
+      });
+      if (nextCursor !== undefined || cursorPaging) {
+        if (strictPaging !== undefined) {
+          throw new Error("Slack search changed message pagination mode before completion");
+        }
+        if (nextCursor === undefined) {
+          throw new Error("Slack search omitted message cursor metadata before completion");
+        }
+        cursorPaging = true;
+        if (matches.length > pageSize) {
+          throw new Error(
+            "Slack search returned more message matches than the requested page size",
+          );
+        }
+        for (const match of matches) {
+          const channel = isRecord(match.channel) ? match.channel.id : undefined;
+          const identity =
+            typeof channel === "string" && typeof match.ts === "string"
+              ? `${channel}:${match.ts}`
+              : match.permalink;
+          if (typeof identity !== "string" || identity.length === 0 || seenMessages.has(identity)) {
+            throw new Error("Slack search returned a duplicate or unidentifiable cursor message");
+          }
+          seenMessages.add(identity);
+        }
+        if (nextCursor !== "" && seenCursors.has(nextCursor)) {
+          throw new Error("Slack search repeated its message cursor before completion");
+        }
+        if (out.length >= input.limit || nextCursor === "") {
+          return out.slice(0, input.limit);
+        }
+        if (seenCursors.size >= 100) {
+          throw new Error("Slack search exceeded its message cursor page limit before completion");
+        }
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+        continue;
+      }
+      // Older servers may ignore the cursor request and return numbered pages.
+      // Keep their existing stricter count and page validation unchanged.
+      cursor = undefined;
       strictPaging = readStrictMessagePaging({
         messages,
         expectedPage: page,

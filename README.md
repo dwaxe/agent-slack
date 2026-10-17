@@ -564,6 +564,11 @@ and fails without partial output if a match is malformed, cannot resolve to a ch
 has no exact matching permalink, or cannot be fetched. This option cannot be combined
 with `--channel` fallback search.
 
+Strict search follows cursor continuation through short pages and requires an explicit
+end marker below the requested limit. Estimated totals do not establish completion;
+malformed, conflicting, or repeated cursors fail without partial output. Servers that
+return numbered pages retain strict count and page validation.
+
 Use `search messages --metadata-only` to return only validated `channel_id`, `ts`, and
 `permalink` refs. It implies strict complete-result validation, emits exact top-level
 `metadata_only: true`, and never fetches full messages, renders content, enriches files,
