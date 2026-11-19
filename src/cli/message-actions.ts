@@ -256,7 +256,7 @@ async function sendMessageToChannel(input: {
 }): Promise<Record<string, unknown>> {
   if (input.postAt !== undefined) {
     const endpoint = await resolveSlackNativeDraftEndpoint({
-      ctx: input.ctx,
+      getClientForWorkspace: input.ctx.getClientForWorkspace,
       client: input.client,
       auth: input.auth,
       workspaceUrl: input.workspaceUrl,

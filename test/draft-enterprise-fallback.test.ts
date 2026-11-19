@@ -7,7 +7,7 @@ import {
 } from "../src/cli/message-draft-actions.ts";
 import {
   isTeamRestrictedError,
-  withEnterpriseDraftFallback,
+  withEnterpriseFallback,
 } from "../src/cli/slack-native-draft-endpoint.ts";
 import type { SlackApiClient, SlackAuth } from "../src/slack/client.ts";
 
@@ -157,13 +157,13 @@ describe("draft Enterprise Grid fallback", () => {
   });
 });
 
-describe("withEnterpriseDraftFallback", () => {
+describe("withEnterpriseFallback", () => {
   test("does not resolve an organization endpoint for other errors or on success", async () => {
     const { calls, ctx, workspaceClient } = createGridContext();
 
     await expect(
-      withEnterpriseDraftFallback({
-        ctx,
+      withEnterpriseFallback({
+        getClientForWorkspace: ctx.getClientForWorkspace,
         client: workspaceClient,
         auth: workspaceAuth,
         workspaceUrl,
@@ -173,8 +173,8 @@ describe("withEnterpriseDraftFallback", () => {
       }),
     ).rejects.toThrow("invalid_auth");
 
-    const ok = await withEnterpriseDraftFallback({
-      ctx,
+    const ok = await withEnterpriseFallback({
+      getClientForWorkspace: ctx.getClientForWorkspace,
       client: workspaceClient,
       auth: workspaceAuth,
       workspaceUrl,

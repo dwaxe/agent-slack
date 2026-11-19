@@ -77,7 +77,7 @@ describe("resolveSlackNativeDraftEndpoint", () => {
     const fixture = createGridFixture();
 
     const endpoint = await resolveSlackNativeDraftEndpoint({
-      ctx: fixture.ctx,
+      getClientForWorkspace: fixture.ctx.getClientForWorkspace,
       client: fixture.workspaceClient,
       auth: browserAuth,
       workspaceUrl,
@@ -96,7 +96,7 @@ describe("resolveSlackNativeDraftEndpoint", () => {
     const wrongEnterprise = createGridFixture({ enterpriseTeamId: "E99999999" });
     await expect(
       resolveSlackNativeDraftEndpoint({
-        ctx: wrongEnterprise.ctx,
+        getClientForWorkspace: wrongEnterprise.ctx.getClientForWorkspace,
         client: wrongEnterprise.workspaceClient,
         auth: browserAuth,
         workspaceUrl,
@@ -106,7 +106,7 @@ describe("resolveSlackNativeDraftEndpoint", () => {
     const wrongUser = createGridFixture({ enterpriseUserId: "U99999999" });
     await expect(
       resolveSlackNativeDraftEndpoint({
-        ctx: wrongUser.ctx,
+        getClientForWorkspace: wrongUser.ctx.getClientForWorkspace,
         client: wrongUser.workspaceClient,
         auth: browserAuth,
         workspaceUrl,
@@ -119,7 +119,7 @@ describe("resolveSlackNativeDraftEndpoint", () => {
 
     await expect(
       resolveSlackNativeDraftEndpoint({
-        ctx: fixture.ctx,
+        getClientForWorkspace: fixture.ctx.getClientForWorkspace,
         client: fixture.workspaceClient,
         auth: browserAuth,
         workspaceUrl,
@@ -133,7 +133,7 @@ describe("resolveSlackNativeDraftEndpoint", () => {
 
     await expect(
       resolveSlackNativeDraftEndpoint({
-        ctx: fixture.ctx,
+        getClientForWorkspace: fixture.ctx.getClientForWorkspace,
         client: fixture.workspaceClient,
         auth: browserAuth,
         workspaceUrl,
@@ -150,13 +150,13 @@ describe("resolveSlackNativeDraftEndpoint", () => {
     const standardAuth = { auth_type: "standard" as const, token: "xoxb-test" };
 
     const standard = await resolveSlackNativeDraftEndpoint({
-      ctx: fixture.ctx,
+      getClientForWorkspace: fixture.ctx.getClientForWorkspace,
       client: fixture.workspaceClient,
       auth: standardAuth,
       workspaceUrl,
     });
     const organization = await resolveSlackNativeDraftEndpoint({
-      ctx: fixture.ctx,
+      getClientForWorkspace: fixture.ctx.getClientForWorkspace,
       client: fixture.enterpriseClient,
       auth: browserAuth,
       workspaceUrl: enterpriseUrl,
@@ -235,7 +235,7 @@ describe("environment-backed Enterprise Grid resolution", () => {
             throw new Error("Unexpected method: " + method);
           } };
           try {
-            await resolveSlackNativeDraftEndpoint({ ctx: { getClientForWorkspace }, client: workspaceClient, auth: childAuth, workspaceUrl: ${JSON.stringify(workspaceUrl)} });
+            await resolveSlackNativeDraftEndpoint({ getClientForWorkspace, client: workspaceClient, auth: childAuth, workspaceUrl: ${JSON.stringify(workspaceUrl)} });
             throw new Error("resolver unexpectedly accepted child credentials");
           } catch (error) {
             console.log(error instanceof Error ? error.message : String(error));
