@@ -104,6 +104,67 @@ export async function resolveSlackNativeDraftEndpoint(input: {
   };
 }
 
+/**
+ * True when a Slack failure is the `team_is_restricted` platform error. The
+ * browser transport throws it as the bare message; the WebClient wraps it in
+ * a PlatformError whose message and `data.error` both carry the code.
+ */
+export function isTeamRestrictedError(error: unknown): boolean {
+  if (isRecord(error)) {
+    const data = isRecord(error.data) ? error.data : undefined;
+    if (data && getString(data.error) === "team_is_restricted") {
+      return true;
+    }
+  }
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return /(?:^|[^a-z])team_is_restricted(?:$|[^a-z])/.test(message);
+}
+
+/**
+ * Run a drafts.* operation against the selected workspace client, retrying
+ * once through the verified Enterprise Grid organization endpoint when Slack
+ * rejects the workspace-addressed call with `team_is_restricted`. Slack
+ * applies that restriction per addressing domain: on Grid, drafts.list and
+ * drafts.delete fail against a child workspace domain while the identical
+ * calls succeed against the organization domain (drafts.create may succeed
+ * on both). Only the retried draft operation changes endpoint — the caller
+ * keeps its selected client for everything else. When no distinct
+ * organization endpoint is available (non-Grid workspace, already on the
+ * organization domain, or organization credentials not configured), the
+ * original error surfaces unchanged.
+ */
+export async function withEnterpriseDraftFallback<T>(input: {
+  ctx: CliContext;
+  client: SlackApiClient;
+  auth: SlackAuth;
+  workspaceUrl?: string;
+  work: (client: SlackApiClient) => Promise<T>;
+}): Promise<{ result: T; routedViaWorkspaceUrl?: string }> {
+  try {
+    return { result: await input.work(input.client) };
+  } catch (error) {
+    if (!isTeamRestrictedError(error)) {
+      throw error;
+    }
+    let endpoint: SlackNativeDraftEndpoint;
+    try {
+      endpoint = await resolveSlackNativeDraftEndpoint({
+        ctx: input.ctx,
+        client: input.client,
+        auth: input.auth,
+        workspaceUrl: input.workspaceUrl,
+      });
+    } catch {
+      throw error;
+    }
+    if (endpoint.client === input.client) {
+      throw error;
+    }
+    const result = await input.work(endpoint.client);
+    return { result, routedViaWorkspaceUrl: endpoint.workspaceUrl };
+  }
+}
+
 function missingOrganizationCredentialsError(workspaceUrl: string, cause?: unknown): Error {
   return new Error(
     `Enterprise Grid native drafts require separate organization browser credentials for ${workspaceUrl}. Import or configure that organization workspace before scheduling, listing, or cancelling native schedules.`,
