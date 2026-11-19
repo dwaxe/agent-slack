@@ -105,6 +105,15 @@ export class SlackApiClient {
   private web?: WebClient;
   private workspaceUrl?: string;
 
+  /**
+   * Workspace URL of the Enterprise Grid organization endpoint when a call
+   * on this client was rerouted there by the enterprise fallback (see
+   * attachEnterpriseFallback in the CLI layer). Undefined when no call has
+   * been rerouted. Read by callers to note the substitution in their output
+   * as `routed_via_workspace_url`.
+   */
+  routedViaWorkspaceUrl?: string;
+
   constructor(auth: SlackAuth, options?: { workspaceUrl?: string }) {
     this.auth = auth;
     this.workspaceUrl = options?.workspaceUrl

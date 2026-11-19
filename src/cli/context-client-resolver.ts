@@ -10,6 +10,7 @@ import {
   upsertWorkspaces,
 } from "../auth/store.ts";
 import { resolveWorkspaceSelector } from "./workspace-selector.ts";
+import { attachEnterpriseFallback } from "./slack-native-draft-endpoint.ts";
 import { SlackApiClient, type SlackAuth } from "../slack/client.ts";
 import { normalizeSlackWorkspaceUrl } from "../slack/workspace-url.ts";
 
@@ -45,7 +46,34 @@ function pickAuthFromEnv(): SlackAuth | null {
   return { auth_type: "standard", token };
 }
 
+/**
+ * Resolve a workspace client and attach the shared enterprise fallback, so
+ * every client handed out through the CLI retries a `team_is_restricted`
+ * call once through the verified organization endpoint. This is the single
+ * construction point for SlackApiClient in the CLI, which makes it the one
+ * place the fallback has to be attached for all commands to get it.
+ */
 export async function getClientForWorkspace(
+  workspaceUrl?: string,
+  options: ClientResolutionOptions = {},
+): Promise<{
+  client: SlackApiClient;
+  auth: SlackAuth;
+  workspace_url?: string;
+}> {
+  const resolved = await resolveClientForWorkspace(workspaceUrl, options);
+  return {
+    ...resolved,
+    client: attachEnterpriseFallback({
+      getClientForWorkspace,
+      client: resolved.client,
+      auth: resolved.auth,
+      workspaceUrl: resolved.workspace_url ?? workspaceUrl,
+    }),
+  };
+}
+
+async function resolveClientForWorkspace(
   workspaceUrl?: string,
   options: ClientResolutionOptions = {},
 ): Promise<{

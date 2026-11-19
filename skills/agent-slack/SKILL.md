@@ -30,8 +30,8 @@ reauthenticate. Pure wording from user-provided context needs no Slack call.
   `trusted_static` identity map. Use no partial batch.
 - Safe mode redirects sends to drafts, blocks CI compose, and blocks edits and
   deletes.
-- On Enterprise Grid, draft commands addressed to a child workspace domain
-  retry once through the organization endpoint when Slack returns
+- On Enterprise Grid, any command addressed to a child workspace domain
+  retries a call once through the organization endpoint when Slack returns
   `team_is_restricted`; a `routed_via_workspace_url` field in the output marks
   that substitution and is not an error.
 - Do not mutate linked systems unless separately requested.

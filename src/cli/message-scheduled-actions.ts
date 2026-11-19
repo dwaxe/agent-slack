@@ -42,7 +42,7 @@ export async function listScheduledMessages(input: {
         ? await resolveScheduledChannelTarget(client, channelTarget)
         : undefined;
       const endpoint = await resolveSlackNativeDraftEndpoint({
-        ctx: input.ctx,
+        getClientForWorkspace: input.ctx.getClientForWorkspace,
         client,
         auth,
         workspaceUrl: workspace_url ?? workspaceUrl,
@@ -82,7 +82,7 @@ export async function cancelScheduledMessage(input: {
       const { client, auth, workspace_url } = await input.ctx.getClientForWorkspace(workspaceUrl);
       const channelId = await resolveScheduledChannelTarget(client, channelTarget);
       const endpoint = await resolveSlackNativeDraftEndpoint({
-        ctx: input.ctx,
+        getClientForWorkspace: input.ctx.getClientForWorkspace,
         client,
         auth,
         workspaceUrl: workspace_url ?? workspaceUrl,

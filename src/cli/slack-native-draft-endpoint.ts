@@ -18,7 +18,7 @@ export type SlackNativeDraftEndpoint = {
  * using it for a workspace-targeted scheduled message.
  */
 export async function resolveSlackNativeDraftEndpoint(input: {
-  ctx: CliContext;
+  getClientForWorkspace: CliContext["getClientForWorkspace"];
   client: SlackApiClient;
   auth: SlackAuth;
   workspaceUrl?: string;
@@ -74,7 +74,7 @@ export async function resolveSlackNativeDraftEndpoint(input: {
   const enterpriseWorkspaceUrl = `https://${enterpriseDomain}.enterprise.slack.com`;
   let enterprise: Awaited<ReturnType<CliContext["getClientForWorkspace"]>>;
   try {
-    enterprise = await input.ctx.getClientForWorkspace(enterpriseWorkspaceUrl, {
+    enterprise = await input.getClientForWorkspace(enterpriseWorkspaceUrl, {
       excludeAuth: input.auth,
     });
   } catch (error) {
@@ -120,21 +120,30 @@ export function isTeamRestrictedError(error: unknown): boolean {
   return /(?:^|[^a-z])team_is_restricted(?:$|[^a-z])/.test(message);
 }
 
+/** Clients whose organization endpoint is currently being resolved. */
+const resolvingEnterpriseFor = new WeakSet<SlackApiClient>();
+
 /**
- * Run a drafts.* operation against the selected workspace client, retrying
- * once through the verified Enterprise Grid organization endpoint when Slack
+ * Run an operation against the selected workspace client, retrying it once
+ * through the verified Enterprise Grid organization endpoint when Slack
  * rejects the workspace-addressed call with `team_is_restricted`. Slack
- * applies that restriction per addressing domain: on Grid, drafts.list and
- * drafts.delete fail against a child workspace domain while the identical
- * calls succeed against the organization domain (drafts.create may succeed
- * on both). Only the retried draft operation changes endpoint — the caller
- * keeps its selected client for everything else. When no distinct
- * organization endpoint is available (non-Grid workspace, already on the
- * organization domain, or organization credentials not configured), the
- * original error surfaces unchanged.
+ * applies that restriction per addressing domain, not per method: on Grid,
+ * drafts.list and drafts.delete fail against a child workspace domain while
+ * the identical calls succeed against the organization domain, and any other
+ * method can be restricted the same way. Only the retried operation changes
+ * endpoint — the caller keeps its selected client for everything else. When
+ * no distinct organization endpoint is available (non-Grid workspace,
+ * already on the organization domain, standard auth, or organization
+ * credentials not configured), the original error surfaces unchanged.
+ *
+ * Resolution itself calls auth.test/team.info on the selected client, which
+ * may be a client whose calls already route through this fallback (see
+ * attachEnterpriseFallback). While a client's endpoint is being resolved,
+ * nested fallbacks for that client are suppressed so those verification
+ * calls run as-is and a restricted verification call cannot recurse.
  */
-export async function withEnterpriseDraftFallback<T>(input: {
-  ctx: CliContext;
+export async function withEnterpriseFallback<T>(input: {
+  getClientForWorkspace: CliContext["getClientForWorkspace"];
   client: SlackApiClient;
   auth: SlackAuth;
   workspaceUrl?: string;
@@ -143,19 +152,22 @@ export async function withEnterpriseDraftFallback<T>(input: {
   try {
     return { result: await input.work(input.client) };
   } catch (error) {
-    if (!isTeamRestrictedError(error)) {
+    if (!isTeamRestrictedError(error) || resolvingEnterpriseFor.has(input.client)) {
       throw error;
     }
     let endpoint: SlackNativeDraftEndpoint;
+    resolvingEnterpriseFor.add(input.client);
     try {
       endpoint = await resolveSlackNativeDraftEndpoint({
-        ctx: input.ctx,
+        getClientForWorkspace: input.getClientForWorkspace,
         client: input.client,
         auth: input.auth,
         workspaceUrl: input.workspaceUrl,
       });
     } catch {
       throw error;
+    } finally {
+      resolvingEnterpriseFor.delete(input.client);
     }
     if (endpoint.client === input.client) {
       throw error;
@@ -163,6 +175,58 @@ export async function withEnterpriseDraftFallback<T>(input: {
     const result = await input.work(endpoint.client);
     return { result, routedViaWorkspaceUrl: endpoint.workspaceUrl };
   }
+}
+
+/** The drafts.* entry point to the shared fallback, kept under its original name. */
+export const withEnterpriseDraftFallback = withEnterpriseFallback;
+
+/** Clients that already carry the per-call enterprise fallback. */
+const enterpriseFallbackAttached = new WeakSet<SlackApiClient>();
+
+/**
+ * Attach the shared enterprise fallback to a client so every API call it
+ * makes retries once through the verified organization endpoint on
+ * `team_is_restricted`, without the caller wrapping each operation. This is
+ * the per-call form of withEnterpriseFallback, applied by the client factory
+ * (getClientForWorkspace) to every client it hands out, so all commands —
+ * not just drafts — get the fallback. A reroute is recorded on the client as
+ * `routedViaWorkspaceUrl`, the same note the operation-level wrapper returns
+ * for command output. The edge user-search transport is not workspace-domain
+ * addressed and is left unwrapped.
+ */
+export function attachEnterpriseFallback(input: {
+  getClientForWorkspace: CliContext["getClientForWorkspace"];
+  client: SlackApiClient;
+  auth: SlackAuth;
+  workspaceUrl?: string;
+}): SlackApiClient {
+  const { client } = input;
+  if (enterpriseFallbackAttached.has(client)) {
+    return client;
+  }
+  enterpriseFallbackAttached.add(client);
+  const rawApi = client.api.bind(client);
+  const rawApiMultipart = client.apiMultipart.bind(client);
+  const route = async <T>(raw: (target: SlackApiClient) => Promise<T>): Promise<T> => {
+    const { result, routedViaWorkspaceUrl } = await withEnterpriseFallback({
+      getClientForWorkspace: input.getClientForWorkspace,
+      client,
+      auth: input.auth,
+      workspaceUrl: input.workspaceUrl,
+      work: raw,
+    });
+    if (routedViaWorkspaceUrl) {
+      client.routedViaWorkspaceUrl = routedViaWorkspaceUrl;
+    }
+    return result;
+  };
+  client.api = (method: string, params: Record<string, unknown> = {}) =>
+    route((target) => (target === client ? rawApi(method, params) : target.api(method, params)));
+  client.apiMultipart = (method: string, params: Record<string, unknown> = {}) =>
+    route((target) =>
+      target === client ? rawApiMultipart(method, params) : target.apiMultipart(method, params),
+    );
+  return client;
 }
 
 function missingOrganizationCredentialsError(workspaceUrl: string, cause?: unknown): Error {

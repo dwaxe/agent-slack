@@ -16,22 +16,22 @@ import { getString, isRecord } from "../lib/object-type-guards.ts";
 import { normalizeScheduleLimit } from "../slack/scheduled-messages.ts";
 import { cleanupUploadedDraftFiles, uploadFilesForDraft } from "../slack/upload.ts";
 import { normalizeAttachPaths } from "./options.ts";
-import { withEnterpriseDraftFallback } from "./slack-native-draft-endpoint.ts";
+import { withEnterpriseFallback } from "./slack-native-draft-endpoint.ts";
 
 /** Output note recorded when a draft call was rerouted through the organization endpoint. */
 function routedViaNote(routedViaWorkspaceUrl: string | undefined): Record<string, unknown> {
   return routedViaWorkspaceUrl ? { routed_via_workspace_url: routedViaWorkspaceUrl } : {};
 }
 
-/** Run a draft operation with the Enterprise Grid team_is_restricted fallback. */
+/** Run a draft operation with the shared Enterprise Grid team_is_restricted fallback. */
 function runDraftOperation<T>(input: {
   ctx: CliContext;
   resolved: { client: SlackApiClient; auth: SlackAuth; workspace_url?: string };
   workspaceUrl: string | undefined;
   work: (client: SlackApiClient) => Promise<T>;
 }): Promise<{ result: T; routedViaWorkspaceUrl?: string }> {
-  return withEnterpriseDraftFallback({
-    ctx: input.ctx,
+  return withEnterpriseFallback({
+    getClientForWorkspace: input.ctx.getClientForWorkspace,
     client: input.resolved.client,
     auth: input.resolved.auth,
     workspaceUrl: input.resolved.workspace_url ?? input.workspaceUrl,
